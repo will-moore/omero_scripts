@@ -12,7 +12,6 @@ from numpy import array
 from omero.gateway import BlitzGateway
 import omero
 from omero.rtypes import *
-from distance_functions import ripleykfunction
 
 FILE_TYPES = {'localizer':{'numColumns': 12, 'name': 'localizer', 'frame': 0, 'intensity': 1, 'z_col': None, 'psf_sigma': 2, 'headerlines': 5, 'x_col': 3, 'y_col': 4}, 
               'quickpalm':{'numColumns': 15, 'name': 'quickpalm', 'frame': 14, 'intensity': 1, 'z_col': 6, 'psf_sigma': None, 'headerlines': 1, 'x_col': 2, 'y_col': 3},
@@ -127,31 +126,28 @@ def get_coords_in_roi(all_coords,roi):
     return all_coords[(all_coords[:,0] > xstart) & (all_coords[:,0] < xstop)
                       & (all_coords[:,1] > ystart) & (all_coords[:,1] < ystop)]
     
-def process_data(conn,image,rectangles,coords,rmax):
+def process_data(conn,image,rectangles,coords):
     """
-        Calculates the ripley l function for coordinates in user-defined rectangular roi
+        Get the coordinates in each roi, write to a file
+        and append to dataset
     """    
-    num_rois = len(rectangles)
-    dist_scale = np.linspace(0,rmax,200)
-    ripleyl = np.zeros((dist_scale.shape[0],num_rois))
+    message = ""
     for i,rect in enumerate(rectangles):
         locs = get_coords_in_roi(coords,rect)
-        box = [rect[0],rect[0]+rect[2],rect[1],rect[1]+rect[3]]
-        l = ripleykfunction(locs,dist_scale,box,0)
-        ripleyl[:,i] = l[:,0]
-#    file_name = "coords_in_roi_%s.csv" % i
-#    try:
-#        f = open(file_name,'w')
-#        for r in range(locs.shape[0]):
-#            row = locs[r,:]
-#            f.write(','.join([str(c) for c in row])+'\n')
-#    finally:
-#        f.close()
+        file_name = "coords_in_roi_%s.csv" % i
+        try:
+            f = open(file_name,'w')
+            for r in range(locs.shape[0]):
+                row = locs[r,:]
+                f.write(','.join([str(c) for c in row])+'\n')
+        finally:
+            f.close()
 
-#    new_file_ann, faMessage = script_util.createLinkFileAnnotation(
-#        conn, file_name, image, output="wrote coords file",
-#        mimetype="text/csv", desc=None)
-    return ripleyl
+        new_file_ann, faMessage = script_util.createLinkFileAnnotation(
+            conn, file_name, image, output="wrote coords file",
+            mimetype="text/csv", desc=None)
+        message += faMessage
+    return message
                             
 def run_processing(conn,script_params):
     file_anns = []
@@ -173,7 +169,6 @@ def run_processing(conn,script_params):
     sr_pix_size = script_params['SR_pixel_size']
     cam_pix_size = script_params['Parent_Image_Pixel_Size']
     file_type = script_params['File_Type']
-    rmax = script_params['Max_radius']
      
     path_to_ann = ann.getFile().getPath() + '/' + ann.getFile().getName()
     name,ext = os.path.splitext(path_to_ann)
@@ -181,30 +176,7 @@ def run_processing(conn,script_params):
         path_to_data = download_data(ann)
         coords = parse_sr_data(path_to_data,file_type,cam_pix_size)
         rectangles = get_rectangles(conn,image_id,sr_pix_size)
-        roi_data = process_data(conn,image,rectangles,coords,rmax)
-        
-        file_name = "ripleyl_plot_" + ann.getFile().getName()[:-4] + '.csv'
-        print file_name
-        try:
-            f = open(file_name,'w')
-            for r in range(roi_data.shape[0]):
-                row = roi_data[r,:]
-                f.write(','.join([str(c) for c in row])+'\n')
-        finally:
-            f.close()
-
-        new_file_ann, faMessage = script_util.createLinkFileAnnotation(
-            conn, file_name, image, output="Ripley L Plot csv (Excel) file",
-            mimetype="text/csv", desc=None)
-        if new_file_ann:
-            file_anns.append(new_file_ann)
-
-        if not file_anns:
-            faMessage = "No Analysis files created. See 'Info' or 'Error' for"\
-                " more details"
-        elif len(file_anns) > 1:
-            faMessage = "Created %s csv (Excel) files" % len(file_anns)
-        message += faMessage
+        faMessage = process_data(conn,image,rectangles,coords)
     else:
         message = 'file annotation must be txt or csv'
         return message
@@ -242,9 +214,6 @@ def run_as_script():
 
     scripts.Int("Parent_Image_Pixel_Size", optional=False, grouping="06",
         description="EMCCD pixel size in nm"),
-        
-    scripts.Int("Max_radius", optional=False, grouping="07",
-        description="Maximum distance scale for calculation in nm", default=100),
         
     version = "5.0.2",
     authors = ["Daniel Matthews", "QBI"],
