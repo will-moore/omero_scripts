@@ -11,8 +11,9 @@ from scipy.fftpack import fft2,ifft2,fftshift
 def create_distance_matrix(pointsA,pointsB):   
     return np.sort(cdist(np.array(pointsA),np.array(pointsB),'euclidean'))
 
-def nearest_neighbour(distMat,col):
-    nnDist = distMat[:,col]
+def nearest_neighbour(dataXY,col=1):
+    dist_mat = create_distance_matrix(dataXY,dataXY)
+    nnDist = dist_mat[:,col]
     return nnDist
     
 def range_search(distMat,dataSize,rangeProps):
@@ -175,3 +176,15 @@ def pc_corr(image1=None,image2=None,region=None,rmax=100):
 
     G[rmax+1, rmax+1] = 0
     return G,r,g,dg,mask
+
+if __name__=='__main__':
+
+    filepath = '/Users/uqdmatt2/Documents/Programming/Python/SMLMpy/test_data/coords_in_roi_0.csv'
+    data = np.genfromtxt(filepath,delimiter=',',usecols=range(2),dtype='float')
+    print data.shape
+    nn = nearest_neighbour(data,1)
+    hist_nn,edges = np.histogram(nn, bins=100)
+    print hist_nn.shape
+    plt.figure()
+    plt.bar(hist_nn,edges)
+    plt.show()
