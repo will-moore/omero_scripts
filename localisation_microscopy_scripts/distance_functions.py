@@ -183,6 +183,7 @@ if __name__=='__main__':
     data = np.genfromtxt(filepath,delimiter=',',usecols=range(2),dtype='float')
     print data.shape
     bins = np.arange(0,200,1)
+    print bins.shape[0]
     nn = nearest_neighbour(data,1)
     hist_nn,edges = np.histogram(nn, bins=bins)
     print edges

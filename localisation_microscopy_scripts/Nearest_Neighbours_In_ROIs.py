@@ -133,7 +133,7 @@ def process_data(conn,image,rectangles,coords):
     """    
     dist_bins = np.arange(0,200,1)
     num_rois = len(rectangles)
-    nn_hist = np.zeros((100,num_rois))
+    nn_hist = np.zeros((dist_bins.shape[0]-1,num_rois))
     for i,rect in enumerate(rectangles):
         locs = get_coords_in_roi(coords,rect)
         nn = nearest_neighbour(locs)
