@@ -134,12 +134,14 @@ def process_data(conn,image,rectangles,coords):
     dist_bins = np.arange(0,200,1)
     num_rois = len(rectangles)
     nn_hist = np.zeros((dist_bins.shape[0]-1,num_rois))
+    nn_data = []
     for i,rect in enumerate(rectangles):
         locs = get_coords_in_roi(coords,rect)
         nn = nearest_neighbour(locs)
+        nn_data.append(nn)
         hist,edges = np.histogram(nn,bins=dist_bins)
         nn_hist[:,i] = hist
-    return nn,nn_hist,edges
+    return nn_data,nn_hist,edges
                             
 def run_processing(conn,script_params):
     file_anns = []
@@ -174,8 +176,8 @@ def run_processing(conn,script_params):
         print file_name
         try:
             f = open(file_name,'w')
-            for r in range(nn_data.shape[0]):
-                row = nn_data[r,:]
+            for r in range(len(nn_data)):
+                row = nn_data[r]
                 f.write(','.join([str(c) for c in row])+'\n')
         finally:
             f.close()
