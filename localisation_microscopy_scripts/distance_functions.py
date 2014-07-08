@@ -103,6 +103,24 @@ def ripleykfunction(dataXY,dist_scale,box,method):
                 L[i] = np.sqrt(K/pi) - dist_scale[i]
     return L
 
+def ripley_ci(num_locs,box,num_simulations,rmax):
+    dist_scale = np.linspace(0, rmax, 200)
+    lrand = np.zeros((dist_scale.shape[0],num_simulations))
+    for s in range(num_simulations):
+        rand_datax = np.random.uniform(box[0],box[1],num_locs)
+        rand_datay = np.random.uniform(box[2],box[3],num_locs)
+        rand_xy = np.zeros((data.shape[0],2))
+        rand_xy[:,0] = rand_datax
+        rand_xy[:,1] = rand_datay
+        lrand[:,s] = ripleykfunction(rand_xy,dist_scale,box,0)[:,0]
+        
+    meanl = np.mean(lrand, axis=1)
+    stdl = np.std(lrand, axis=1)
+    ci_plus = meanl + 2*stdl
+    ci_minus = meanl - 2*stdl
+    
+    return ci_plus,ci_minus
+    
 def cart2pol(x,y,z):
     theta = np.arctan2(x,y)
     r = np.sqrt(x**2+y**2)
@@ -186,10 +204,12 @@ if __name__=='__main__':
     print bins.shape[0]
     nn = nearest_neighbour(data,1)
     hist_nn,edges = np.histogram(nn, bins=bins)
-    print edges
-    print hist_nn
-    print hist_nn.shape
-    print bins.shape
+    box = [np.min(data[:,0]),np.max(data[:,0]),np.min(data[:,1]),np.max(data[:,1])]
+    dist_scale = np.linspace(0,100,200)
+    l = ripleykfunction(data,dist_scale,box,0)
+    ci_plus,ci_minus = ripley_ci(data.shape[0],box,10,100)
     plt.figure()
-    plt.bar(edges[:-1],hist_nn)
+    plt.plot(dist_scale,l,'r-')
+    plt.plot(dist_scale,ci_plus,'b-')
+    plt.plot(dist_scale,ci_minus,'b-')
     plt.show()
