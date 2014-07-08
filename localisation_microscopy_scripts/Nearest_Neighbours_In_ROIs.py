@@ -131,14 +131,15 @@ def process_data(conn,image,rectangles,coords):
     """
         Calculates the neighbour distance in all the rectangular rois
     """    
+    dist_bins = np.arange(0,200,1)
     num_rois = len(rectangles)
     nn_hist = np.zeros((100,num_rois))
     for i,rect in enumerate(rectangles):
         locs = get_coords_in_roi(coords,rect)
         nn = nearest_neighbour(locs)
-        hist,edges = np.histogram(nn,bins=100)
+        hist,edges = np.histogram(nn,bins=dist_bins)
         nn_hist[:,i] = hist
-    return nn_hist,edges
+    return nn,nn_hist,edges
                             
 def run_processing(conn,script_params):
     file_anns = []
@@ -167,16 +168,14 @@ def run_processing(conn,script_params):
         path_to_data = download_data(ann)
         coords = parse_sr_data(path_to_data,file_type,cam_pix_size)
         rectangles = get_rectangles(conn,image_id,sr_pix_size)
-        nn_data,edges = process_data(conn,image,rectangles,coords)
+        nn_data,nn_hist,edges = process_data(conn,image,rectangles,coords)
         
         file_name = "near_neighbours_" + ann.getFile().getName()[:-4] + '.csv'
         print file_name
         try:
             f = open(file_name,'w')
             for r in range(nn_data.shape[0]):
-                row = []
-                row.append(edges[r])
-                row.append(nn_data[r,:])
+                row = nn_data[r,:]
                 f.write(','.join([str(c) for c in row])+'\n')
         finally:
             f.close()

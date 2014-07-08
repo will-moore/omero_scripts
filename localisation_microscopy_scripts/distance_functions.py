@@ -182,9 +182,13 @@ if __name__=='__main__':
     filepath = '/Users/uqdmatt2/Documents/Programming/Python/SMLMpy/test_data/coords_in_roi_0.csv'
     data = np.genfromtxt(filepath,delimiter=',',usecols=range(2),dtype='float')
     print data.shape
+    bins = np.arange(0,200,1)
     nn = nearest_neighbour(data,1)
-    hist_nn,edges = np.histogram(nn, bins=100)
+    hist_nn,edges = np.histogram(nn, bins=bins)
+    print edges
+    print hist_nn
     print hist_nn.shape
+    print bins.shape
     plt.figure()
-    plt.bar(hist_nn,edges)
+    plt.bar(edges[:-1],hist_nn)
     plt.show()
