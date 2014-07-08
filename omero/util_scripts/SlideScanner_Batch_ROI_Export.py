@@ -5,7 +5,8 @@ from email.MIMEBase import MIMEBase
 from email.MIMEText import MIMEText
 from email import Encoders
 from email.Utils import formatdate
-
+import smtplib
+import re
 import omero
 import omero.scripts as scripts
 from omero.gateway import BlitzGateway
@@ -16,6 +17,8 @@ import os
 
 import time
 startTime = 0
+
+ADMIN_EMAIL = 'admin@omero.host.com'
 
 
 def printDuration(output=True):
@@ -68,17 +71,13 @@ def getRectangles(conn, imageId):
     return rois
 
 
-def processImage(conn, imageId, parameterMap):
+def process_image(conn, imageId, parameterMap):
     """
     Process an image.
-    If imageStack is True, we make a Z-stack using one tile from each ROI
-    (c=0)
-    Otherwise, we create a 5D image representing the ROI "cropping" the
+    Create a 5D image representing the ROI "cropping" the
     original image
     Image is put in a dataset if specified.
     """
-
-    imageStack = parameterMap['Make_Image_Stack']
 
     image = conn.getObject("Image", imageId)
     if image is None:
@@ -124,141 +123,96 @@ def processImage(conn, imageId, parameterMap):
         print "No rectangular ROIs found for image ID: %s" % imageId
         return
 
-    # if making a single stack image...
-    if imageStack:
-        print "\nMaking Image stack from ROIs of Image:", imageId
-        print "physicalSize X, Y:  %s, %s" % (physicalSizeX, physicalSizeY)
-        # use width and height from first roi to make sure that all are the
-        # same.
-        x, y, width, height, z1, z2, t1, t2 = rois[0]
+#make a new 5D image per ROI
+    images = []
+    iIds = []
+    for r in rois:
+        x, y, w, h, z1, z2, t1, t2 = r
+        print "  ROI x: %s y: %s w: %s h: %s z1: %s z2: %s t1: %s t2: %s"\
+            % (x, y, w, h, z1, z2, t1, t2)
+
+        # need a tile generator to get all the planes within the ROI
+        sizeZ = z2-z1 + 1
+        sizeT = t2-t1 + 1
+        sizeC = image.getSizeC()
+        zctTileList = []
+        tile = (x, y, w, h)
+        print "zctTileList..."
+        for z in range(z1, z2+1):
+            for c in range(sizeC):
+                for t in range(t1, t2+1):
+                    zctTileList.append((z, c, t, tile))
 
         def tileGen():
-            # list a tile from each ROI and create a generator of 2D planes
-            zctTileList = []
-            # assume single channel image Electron Microscopy use case
-            c = 0
-            for r in rois:
-                x, y, w, h, z1, z2, t1, t2 = r
-                tile = (x, y, width, height)
-                zctTileList.append((z1, c, t1, tile))
-            for t in pixels.getTiles(zctTileList):
+            for i, t in enumerate(pixels.getTiles(zctTileList)):
                 yield t
 
-        if 'Container_Name' in parameterMap:
-            newImageName = "%s_%s" % (os.path.basename(imageName),
-                                      parameterMap['Container_Name'])
-        else:
-            newImageName = os.path.basename(imageName)
-        description = "Image from ROIS on parent Image:\n  Name: %s\n"\
-            "  Image ID: %d" % (imageName, imageId)
-        print description
-        image = conn.createImageFromNumpySeq(
-            tileGen(), newImageName,
-            sizeZ=len(rois), sizeC=1, sizeT=1, description=description,
-            dataset=None)
+        print "sizeZ, sizeC, sizeT", sizeZ, sizeC, sizeT
+        description = "Created from image:\n  Name: %s\n  Image ID: %d"\
+            " \n x: %d y: %d" % (imageName, imageId, x, y)
+        newImg = conn.createImageFromNumpySeq(
+            tileGen(), imageName,
+            sizeZ=sizeZ, sizeC=sizeC, sizeT=sizeT,
+            description=description, sourceImageId=imageId)
 
-        # Link image to dataset
-        if parentDataset and parentDataset.canLink():
-            link = omero.model.DatasetImageLinkI()
-            link.parent = omero.model.DatasetI(parentDataset.getId(), False)
-            link.child = omero.model.ImageI(image.getId(), False)
-            conn.getUpdateService().saveAndReturnObject(link)
-        else:
-            link = None
+        print "New Image Id = %s" % newImg.getId()
 
-        return image, None, link
+        images.append(newImg)
+        iIds.append(newImg.getId())
 
-    # ...otherwise, we're going to make a new 5D image per ROI
+    if len(iIds) == 0:
+        print "No new images created."
+        return
+
+    if 'Container_Name' in parameterMap and \
+       len(parameterMap['Container_Name'].strip()) > 0:
+        # create a new dataset for new images
+        datasetName = parameterMap['Container_Name']
+        print "\nMaking Dataset '%s' of Images from ROIs of Image: %s" \
+            % (datasetName, imageId)
+        print "physicalSize X, Y:  %s, %s" \
+            % (physicalSizeX, physicalSizeY)
+        dataset = omero.model.DatasetI()
+        dataset.name = rstring(datasetName)
+        desc = "Images in this Dataset are from ROIs of parent Image:\n"\
+            "  Name: %s\n  Image ID: %d" % (imageName, imageId)
+        dataset.description = rstring(desc)
+        dataset = updateService.saveAndReturnObject(dataset)
+        parentDataset = dataset
     else:
-        images = []
-        iIds = []
-        for r in rois:
-            x, y, w, h, z1, z2, t1, t2 = r
-            print "  ROI x: %s y: %s w: %s h: %s z1: %s z2: %s t1: %s t2: %s"\
-                % (x, y, w, h, z1, z2, t1, t2)
-
-            # need a tile generator to get all the planes within the ROI
-            sizeZ = z2-z1 + 1
-            sizeT = t2-t1 + 1
-            sizeC = image.getSizeC()
-            zctTileList = []
-            tile = (x, y, w, h)
-            print "zctTileList..."
-            for z in range(z1, z2+1):
-                for c in range(sizeC):
-                    for t in range(t1, t2+1):
-                        zctTileList.append((z, c, t, tile))
-
-            def tileGen():
-                for i, t in enumerate(pixels.getTiles(zctTileList)):
-                    yield t
-
-            print "sizeZ, sizeC, sizeT", sizeZ, sizeC, sizeT
-            description = "Created from image:\n  Name: %s\n  Image ID: %d"\
-                " \n x: %d y: %d" % (imageName, imageId, x, y)
-            newImg = conn.createImageFromNumpySeq(
-                tileGen(), imageName,
-                sizeZ=sizeZ, sizeC=sizeC, sizeT=sizeT,
-                description=description, sourceImageId=imageId)
-
-            print "New Image Id = %s" % newImg.getId()
-
-            images.append(newImg)
-            iIds.append(newImg.getId())
-
-        if len(iIds) == 0:
-            print "No new images created."
-            return
-
-        if 'Container_Name' in parameterMap and \
-           len(parameterMap['Container_Name'].strip()) > 0:
-            # create a new dataset for new images
-            datasetName = parameterMap['Container_Name']
-            print "\nMaking Dataset '%s' of Images from ROIs of Image: %s" \
-                % (datasetName, imageId)
-            print "physicalSize X, Y:  %s, %s" \
-                % (physicalSizeX, physicalSizeY)
-            dataset = omero.model.DatasetI()
-            dataset.name = rstring(datasetName)
-            desc = "Images in this Dataset are from ROIs of parent Image:\n"\
-                "  Name: %s\n  Image ID: %d" % (imageName, imageId)
-            dataset.description = rstring(desc)
-            dataset = updateService.saveAndReturnObject(dataset)
-            parentDataset = dataset
+        # put new images in existing dataset
+        dataset = None
+        if parentDataset is not None and parentDataset.canLink():
+            parentDataset = parentDataset._obj
         else:
-            # put new images in existing dataset
-            dataset = None
-            if parentDataset is not None and parentDataset.canLink():
-                parentDataset = parentDataset._obj
-            else:
-                parentDataset = None
-            parentProject = None    # don't add Dataset to parent.
+            parentDataset = None
+        parentProject = None    # don't add Dataset to parent.
 
-        if parentDataset is None:
-            link = None
-            print "No dataset created or found for new images."\
-                " Images will be orphans."
-        else:
-            link = []
-            for iid in iIds:
-                dsLink = omero.model.DatasetImageLinkI()
-                dsLink.parent = omero.model.DatasetI(
-                    parentDataset.id.val, False)
-                dsLink.child = omero.model.ImageI(iid, False)
-                updateService.saveObject(dsLink)
-                link.append(dsLink)
-            if parentProject and parentProject.canLink():
-                # and put it in the   current project
-                projectLink = omero.model.ProjectDatasetLinkI()
-                projectLink.parent = omero.model.ProjectI(
-                    parentProject.getId(), False)
-                projectLink.child = omero.model.DatasetI(
-                    dataset.id.val, False)
-                updateService.saveAndReturnObject(projectLink)
-        return images, dataset, link
+    if parentDataset is None:
+        link = None
+        print "No dataset created or found for new images."\
+            " Images will be orphans."
+    else:
+        link = []
+        for iid in iIds:
+            dsLink = omero.model.DatasetImageLinkI()
+            dsLink.parent = omero.model.DatasetI(
+                parentDataset.id.val, False)
+            dsLink.child = omero.model.ImageI(iid, False)
+            updateService.saveObject(dsLink)
+            link.append(dsLink)
+        if parentProject and parentProject.canLink():
+            # and put it in the   current project
+            projectLink = omero.model.ProjectDatasetLinkI()
+            projectLink.parent = omero.model.ProjectI(
+                parentProject.getId(), False)
+            projectLink.child = omero.model.DatasetI(
+                dataset.id.val, False)
+            updateService.saveAndReturnObject(projectLink)
+    return images, dataset, link
 
 
-def makeImagesFromRois(conn, parameterMap):
+def make_images_from_rois(conn, parameterMap):
     """
     Processes the list of Image_IDs, either making a new image-stack or a new
     dataset from each image, with new image planes coming from the regions in
@@ -294,7 +248,7 @@ def makeImagesFromRois(conn, parameterMap):
     newDatasets = []
     links = []
     for iId in imageIds:
-        newImage, newDataset, link = processImage(conn, iId, parameterMap)
+        newImage, newDataset, link = process_image(conn, iId, parameterMap)
         if newImage is not None:
             if isinstance(newImage, list):
                 newImages.extend(newImage)
@@ -321,6 +275,10 @@ def makeImagesFromRois(conn, parameterMap):
             message += " and %s new datasets" % len(newDatasets)
         else:
             message += " and a new dataset"
+    
+    print parameterMap['Email_Results']
+    if parameterMap['Email_Results'] and (newImages or newDatasets):
+        email_results(conn,parameterMap)
 
     if not links or not len(links) == len(newImages):
         message += " but some images could not be attached"
@@ -329,6 +287,54 @@ def makeImagesFromRois(conn, parameterMap):
     robj = (len(newImages) > 0) and newImages[0]._obj or None
     return robj, message
 
+def email_results(conn,params):
+    """
+    E-mail the result to the user.
+
+    @param conn: The BlitzGateway connection
+    @param results: Dict of (imageId,text_result) pairs
+    @param report: The results report
+    @param params: The script parameters
+    """
+    print params['Email_Results']
+    if not params['Email_Results']:
+        return
+
+    #image_names = list_image_names(conn, results)
+
+    msg = MIMEMultipart()
+    msg['From'] = ADMIN_EMAIL
+    msg['To'] = params['Email_address']
+    msg['Date'] = formatdate(localtime=True)
+    msg['Subject'] = '[OMERO Job] Slide Scanner image cropping'
+    msg.attach(MIMEText("""New images created from ROIs:"""))
+
+    smtpObj = smtplib.SMTP('localhost')
+    smtpObj.sendmail(ADMIN_EMAIL, [params['Email_address']], msg.as_string())
+    smtpObj.quit()
+
+def validate_email(conn, params):
+    """
+    Checks that a valid email address is present for the user_id
+
+    @param conn: The BlitzGateway connection
+    @param params: The script parameters
+    """
+    userEmail = ''
+    if params['Email_address']:
+        userEmail = params['Email_address']
+    else:
+        user = conn.getUser()
+        user.getName() # Initialises the proxy object for simpleMarshal
+        dic = user.simpleMarshal()
+        if 'email' in dic and dic['email']:
+            userEmail = dic['email']
+
+    params['Email_address'] = userEmail
+    print userEmail
+    # Validate with a regular expression. Not perfect but it will do
+    return re.match("^[a-zA-Z0-9._%-]+@[a-zA-Z0-9._%-]+.[a-zA-Z]{2,6}$",
+                    userEmail)
 
 def runAsScript():
     """
@@ -341,11 +347,7 @@ def runAsScript():
     client = scripts.client(
         'Images_From_ROIs.py',
         """Create new Images from the regions defined by Rectangle ROIs on \
-other Images.
-Designed to work with single-plane images (Z=1 T=1) with multiple ROIs per \
-image.
-If you choose to make an image stack from all the ROIs, this script \
-assumes that all the ROIs on each Image are the same size.""",
+        images recorded on QBI Slide Scanner microscopes""",
 
         scripts.String(
             "Data_Type", optional=False, grouping="1",
@@ -359,19 +361,20 @@ assumes that all the ROIs on each Image are the same size.""",
 
         scripts.String(
             "Container_Name", grouping="3",
-            description="Option: put Images in new Dataset with this name"
-            " OR use this name for new Image stacks, if 'Make_Image_Stack')",
+            description="Option: put Images in new Dataset with this name",
             default="From_ROIs"),
-
+                            
         scripts.Bool(
-            "Make_Image_Stack", grouping="4", default=False,
-            description="If true, make a single Image (stack) from all the"
-            " ROIs of each parent Image"),
+            "Email_Results", grouping="4", default=True,
+            description="E-mail the results"),
+                            
+        scripts.String("Email_address", grouping="4.1", default="Email",
+        description="Specify e-mail address"),
 
-        version="4.2.0",
-        authors=["William Moore", "OME Team"],
-        institutions=["University of Dundee"],
-        contact="ome-users@lists.openmicroscopy.org.uk",
+        version="5.0.2",
+        authors=["Daniel Matthews", "QBI"],
+        institutions = ["University of Queensland"],
+        contact = "d.matthews1@uq.edu.au",
     )
 
     try:
@@ -380,8 +383,12 @@ assumes that all the ROIs on each Image are the same size.""",
 
         # create a wrapper so we can use the Blitz Gateway.
         conn = BlitzGateway(client_obj=client)
+        
+        if parameterMap['Email_Results'] and not validate_email(conn, parameterMap):
+            client.setOutput("Message", rstring("No valid email address"))
+            return
 
-        robj, message = makeImagesFromRois(conn, parameterMap)
+        robj, message = make_images_from_rois(conn, parameterMap)
 
         client.setOutput("Message", rstring(message))
         if robj is not None:
