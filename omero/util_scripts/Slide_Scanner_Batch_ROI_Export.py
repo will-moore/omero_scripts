@@ -18,7 +18,7 @@ import os
 import time
 startTime = 0
 
-ADMIN_EMAIL = 'admin@omero.host.com'
+ADMIN_EMAIL = 'admin@omero.com'
 
 
 def printDuration(output=True):
@@ -97,6 +97,9 @@ def process_image(conn, imageId, parameterMap):
 
     # x, y, w, h, zStart, zEnd, tStart, tEnd
     rois = getRectangles(conn, imageId)
+    if len(rois) > 20:
+        print "max number of allowed rois for batch processing exceeded (20)"
+        return
 
     imgW = image.getSizeX()
     imgH = image.getSizeY()
@@ -209,7 +212,7 @@ def process_image(conn, imageId, parameterMap):
             projectLink.child = omero.model.DatasetI(
                 dataset.id.val, False)
             updateService.saveAndReturnObject(projectLink)
-    return images, dataset, link
+    return images, dataset, link, iIds
 
 
 def make_images_from_rois(conn, parameterMap):
@@ -248,7 +251,7 @@ def make_images_from_rois(conn, parameterMap):
     newDatasets = []
     links = []
     for iId in imageIds:
-        newImage, newDataset, link = process_image(conn, iId, parameterMap)
+        newImage, newDataset, link, new_ids = process_image(conn, iId, parameterMap)
         if newImage is not None:
             if isinstance(newImage, list):
                 newImages.extend(newImage)
@@ -278,7 +281,7 @@ def make_images_from_rois(conn, parameterMap):
     
     print parameterMap['Email_Results']
     if parameterMap['Email_Results'] and (newImages or newDatasets):
-        email_results(conn,parameterMap)
+        email_results(conn,parameterMap,new_ids)
 
     if not links or not len(links) == len(newImages):
         message += " but some images could not be attached"
@@ -287,7 +290,29 @@ def make_images_from_rois(conn, parameterMap):
     robj = (len(newImages) > 0) and newImages[0]._obj or None
     return robj, message
 
-def email_results(conn,params):
+
+def list_image_names(conn, ids):
+    """Builds a list of the image names"""
+    image_names = []
+    for image_id in ids:
+        img = conn.getObject('Image', image_id)
+        if not img:
+            continue
+
+        ds = img.getParent()
+        if ds:
+            pr = ds.getParent()
+        else:
+            pr = None
+
+        image_names.append("[%s][%s] Image %d : %s" % (
+                           pr and pr.getName() or '-',
+                           ds and ds.getName() or '-',
+                           image_id, os.path.basename(img.getName())))
+
+    return image_names
+
+def email_results(conn,params,image_ids):
     """
     E-mail the result to the user.
 
@@ -300,14 +325,21 @@ def email_results(conn,params):
     if not params['Email_Results']:
         return
 
-    #image_names = list_image_names(conn, results)
+    image_names = list_image_names(conn, image_ids)
 
     msg = MIMEMultipart()
     msg['From'] = ADMIN_EMAIL
     msg['To'] = params['Email_address']
     msg['Date'] = formatdate(localtime=True)
     msg['Subject'] = '[OMERO Job] Slide Scanner image cropping'
-    msg.attach(MIMEText("""New images created from ROIs:"""))
+    msg.attach(MIMEText("""
+New images created from ROIs:
+
+Format:
+[parent project/datset][child dataset] new image id : parent image name
+
+------------------------------------------------------------------------
+%s""" % ("\n".join(image_names))))
 
     smtpObj = smtplib.SMTP('localhost')
     smtpObj.sendmail(ADMIN_EMAIL, [params['Email_address']], msg.as_string())
@@ -347,7 +379,7 @@ def runAsScript():
     client = scripts.client(
         'Images_From_ROIs.py',
         """Create new Images from the regions defined by Rectangle ROIs on \
-        images recorded on QBI Slide Scanner microscopes""",
+        images recorded on QBI Slide Scanner microscopes. MAXIMUM BATCH SIZE IS 20 ROIs!""",
 
         scripts.String(
             "Data_Type", optional=False, grouping="1",
