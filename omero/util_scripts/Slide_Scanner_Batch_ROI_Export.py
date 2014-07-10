@@ -7,18 +7,19 @@ from email import Encoders
 from email.Utils import formatdate
 import smtplib
 import re
-import omero
-import omero.scripts as scripts
-from omero.gateway import BlitzGateway
-from omero.rtypes import rstring, rlong, robject
-import omero.util.script_utils as script_utils
+import numpy as np
+# import omero
+# import omero.scripts as scripts
+# from omero.gateway import BlitzGateway
+# from omero.rtypes import rstring, rlong, robject
+# import omero.util.script_utils as script_utils
 
 import os
 
 import time
 startTime = 0
 
-ADMIN_EMAIL = 'admin@omero.com'
+ADMIN_EMAIL = 'admin@omerocloud.qbi.uq.edu.au'
 
 
 def printDuration(output=True):
@@ -70,7 +71,203 @@ def getRectangles(conn, imageId):
 
     return rois
 
+def get_block(source,block_struct,row,col,block_size):
 
+    # compute starting row/col in source image of block of data
+    source_min_row = 1 + block_size[0] * (row - 1)
+    source_min_col = 1 + block_size[1] * (col - 1)
+    source_max_row = source_min_row + block_size[0] - 1
+    source_max_col = source_min_col + block_size[1] - 1
+#     if ~options.PadPartialBlocks
+#         source_max_row = min(source_max_row,source.shape[0]);
+#         source_max_col = min(source_max_col,source.shape[1]);
+#     end
+    
+    # set block struct location (before border pixels are considered)
+    location = [source_min_row, source_min_col]
+    
+    # add border pixels around the block of data
+#     source_min_row = source_min_row - options.BorderSize[0]
+#     source_max_row = source_max_row + options.BorderSize[0];
+#     source_min_col = source_min_col - options.BorderSize[1];
+#     source_max_col = source_max_col + options.BorderSize[1];
+    
+    # setup indices for target block
+    total_rows = source_max_row - source_min_row + 1
+    total_cols = source_max_col - source_min_col + 1
+    
+    # for interior blocks
+    if (source_min_row >= 1) and (source_max_row <= source.getSizeY()) and (source_min_col >= 1) and (source_max_col <= source.getSizeX()):
+        
+        # no padding necessary, just read data and return
+        pixels = source.getPrimaryPixels()
+        data = pixels.getTiles(zctTileList)
+        
+    elif:
+        
+        # setup target indices variables
+        target_min_row = 1;
+        target_max_row = total_rows;
+        target_min_col = 1;
+        target_max_col = total_cols;
+        
+        % check each edge of the requested block for edge
+        if source_min_row < 1
+            delta = 1 - source_min_row;
+            source_min_row = source_min_row + delta;
+            target_min_row = target_min_row + delta;
+        end
+        if source_max_row > source.shape[0]
+            delta = source_max_row - source.shape[0];
+            source_max_row = source_max_row - delta;
+            target_max_row = target_max_row - delta;
+        end
+        if source_min_col < 1
+            delta = 1 - source_min_col;
+            source_min_col = source_min_col + delta;
+            target_min_col = target_min_col + delta;
+        end
+        if source_max_col > source.shape[1]
+            delta = source_max_col - source.shape[1];
+            source_max_col = source_max_col - delta;
+            target_max_col = target_max_col - delta;
+        end
+        
+        % read source data
+        source_data = source.readRegion(...
+            [source_min_row                      source_min_col],...
+            [source_max_row - source_min_row + 1 source_max_col - source_min_col + 1]);
+        
+        % allocate target block (this implicitly also handles constant value
+        % padding around the edges of the partial blocks and boundary
+        % blocks)
+        inputClass = str2func(class(source_data));
+        options.PadValue = inputClass(options.PadValue);
+        block_struct.data = repmat(options.PadValue,[total_rows total_cols size(source_data,3)]);
+        
+        % copy valid data into target block
+        target_rows = target_min_row:target_max_row;
+        target_cols = target_min_col:target_max_col;
+        block_struct.data(target_rows,target_cols,:) = source_data;
+        
+    else
+        
+        % in this code path, have are guaranteed to require *some* padding,
+        % either options.PadPartialBlocks, a border, or both.
+        
+        % Compute padding indices for entire input image
+        has_border = ~isequal(options.BorderSize,[0 0]);
+        if ~has_border
+            % options.PadPartialBlocks only
+            aIdx = getPaddingIndices(source.shape(1:2),...
+                options.Padding(1:2),options.PadMethod,'post');
+            row_idx = aIdx{1};
+            col_idx = aIdx{2};
+            
+        else
+            % has a border...
+            if  ~options.PadPartialBlocks
+                % pad border only, around entire image
+                aIdx = getPaddingIndices(source.shape(1:2),...
+                    options.BorderSize,options.PadMethod,'both');
+                row_idx = aIdx{1};
+                col_idx = aIdx{2};
+                
+                
+            else
+                % both types of padding required
+                aIdx_pre = getPaddingIndices(source.shape(1:2),...
+                    options.BorderSize,options.PadMethod,'pre');
+                post_padding = options.Padding(1:2) + options.BorderSize;
+                aIdx_post = getPaddingIndices(source.shape(1:2),...
+                    post_padding,options.PadMethod,'post');
+                
+                % concatenate the post padding onto the pre-padding results
+                row_idx = [aIdx_pre{1} aIdx_post{1}(end-post_padding[0]+1:end)];
+                col_idx = [aIdx_pre{2} aIdx_post{2}(end-post_padding[1]+1:end)];
+                
+            end
+        end
+        
+        % offset the indices of our desired block to account for the
+        % pre-padding in our padded index arrays
+        source_min_row = source_min_row + options.BorderSize[0];
+        source_max_row = source_max_row + options.BorderSize[0];
+        source_min_col = source_min_col + options.BorderSize[1];
+        source_max_col = source_max_col + options.BorderSize[1];
+        
+        % extract just the indices of our desired block
+        block_row_ind = row_idx(source_min_row:source_max_row);
+        block_col_ind = col_idx(source_min_col:source_max_col);
+        
+        % compute the absolute row/col limits containing all the necessary
+        % data from our source image
+        block_row_min = min(block_row_ind);
+        block_row_max = max(block_row_ind);
+        block_col_min = min(block_col_ind);
+        block_col_max = max(block_col_ind);
+        
+        % read the block from the adapter object containing all necessary data
+        source_data = source.readRegion(...
+            [block_row_min                      block_col_min],...
+            [block_row_max - block_row_min + 1  block_col_max - block_col_min + 1]);
+        
+        % offset our block_row/col_inds to align with the data read from the
+        % adapter
+        block_row_ind = block_row_ind - block_row_min + 1;
+        block_col_ind = block_col_ind - block_col_min + 1;
+        
+        % finally index into our block of source data with the correctly
+        % padding index lists
+        block_struct.data = source_data(block_row_ind,block_col_ind,:);
+        
+    end
+    
+    data_size = [size(block_struct.data,1) size(block_struct.data,2)];
+    block_struct.block_size = data_size - 2 * block_struct.border
+
+def get_blocks(block_size,mblocks,nblocks,box):
+    if float(box[2])%float(block_size[0]) != 0.0:
+        mpartial = (float(box[2])%float(block_size[0]))/float(block_size[0])
+    else:
+        mpartial = 0.0
+    if float(box[3])/float(block_size[1]) != 0.0:
+        npartial = (float(box[3])%float(block_size[1]))/float(block_size[1])
+    else:
+        npartial = 0.0
+
+    num_blocks = mblocks * nblocks
+    blk_coords = np.zeros((num_blocks,2))
+    blk_coords[0,:] = box[0:2]
+    for row_blk in range(1,mblocks):
+        row_blk_pos = 
+    
+def block_tile_gen(pixels,box):
+    #pixels is the raw pixel store
+    
+    #first work out the location and number blocks required
+    block_size = (500,500)
+    
+    # total number of blocks we'll process (including partials)
+    mblocks = (box[2] + padding[0]) / block_size[0]
+    nblocks = (box[3] + padding[1]) / block_size[1]
+    
+    # determine the block indices
+    #get_block_indices(box,mblock,nblocks)
+    
+    """ Given [x,y,w,h] of the region in the image to crop,
+    break up the region into blocks of a given size.
+    
+    Determine the [x,y,w,h] of each block required from the image
+    
+    Get the block from the image.
+    
+    Determine where in the new data set the block needs to go
+    
+    Make the new dataset
+    
+    Write the dataset """
+    
 def process_image(conn, imageId, parameterMap):
     """
     Process an image.
@@ -97,9 +294,6 @@ def process_image(conn, imageId, parameterMap):
 
     # x, y, w, h, zStart, zEnd, tStart, tEnd
     rois = getRectangles(conn, imageId)
-    if len(rois) > 20:
-        print "max number of allowed rois for batch processing exceeded (20)"
-        return
 
     imgW = image.getSizeX()
     imgH = image.getSizeY()
@@ -121,7 +315,7 @@ def process_image(conn, imageId, parameterMap):
 
     print "rois"
     print rois
-
+    
     if len(rois) == 0:
         print "No rectangular ROIs found for image ID: %s" % imageId
         return
@@ -145,6 +339,8 @@ def process_image(conn, imageId, parameterMap):
             for c in range(sizeC):
                 for t in range(t1, t2+1):
                     zctTileList.append((z, c, t, tile))
+                    
+        block_tile_gen(pixels,r)
 
         def tileGen():
             for i, t in enumerate(pixels.getTiles(zctTileList)):
@@ -246,6 +442,11 @@ def make_images_from_rois(conn, parameterMap):
         message += "No rectangle ROI found."
         return None, message
 
+    total_rois = sum([i.getROICount("Rect") for i in images])
+    if total_rois > 10:
+        message += "Cannot start batch processing - too many rois (maximum is 10)."
+        return None, message
+        
     imageIds = [i.getId() for i in images]
     newImages = []
     newDatasets = []
@@ -378,8 +579,7 @@ def runAsScript():
 
     client = scripts.client(
         'Images_From_ROIs.py',
-        """Create new Images from the regions defined by Rectangle ROIs on \
-        images recorded on QBI Slide Scanner microscopes. MAXIMUM BATCH SIZE IS 20 ROIs!""",
+        """Crop rectangular regions from slide scanner images. MAXIMUM BATCH SIZE IS 10 ROIs!""",
 
         scripts.String(
             "Data_Type", optional=False, grouping="1",
@@ -400,7 +600,7 @@ def runAsScript():
             "Email_Results", grouping="4", default=True,
             description="E-mail the results"),
                             
-        scripts.String("Email_address", grouping="4.1", default="Email",
+        scripts.String("Email_address", grouping="4.1",
         description="Specify e-mail address"),
 
         version="5.0.2",
@@ -431,4 +631,11 @@ def runAsScript():
         printDuration()
 
 if __name__ == "__main__":
-    runAsScript()
+    #runAsScript()
+    box = [150, 150, 100, 225]
+    Largeshape = [400, 400]
+    block_size = [50, 50]
+    mblocks = float(box[2])/float(block_size[0])
+    nblocks = float(box[3])/float(block_size[1])
+
+    get_blocks(block_size,mblocks,nblocks,box)
