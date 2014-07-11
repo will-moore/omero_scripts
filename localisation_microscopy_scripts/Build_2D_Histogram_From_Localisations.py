@@ -12,7 +12,7 @@ from numpy import array
 from omero.gateway import BlitzGateway
 import omero
 from omero.rtypes import *
-from distance_functions import nearest_neighbour
+from hist_data import calc_hist
 
 FILE_TYPES = {'localizer':{'numColumns': 12, 'name': 'localizer', 'frame': 0, 'intensity': 1, 'z_col': None, 'psf_sigma': 2, 'headerlines': 5, 'x_col': 3, 'y_col': 4}, 
               'quickpalm':{'numColumns': 15, 'name': 'quickpalm', 'frame': 14, 'intensity': 1, 'z_col': 6, 'psf_sigma': None, 'headerlines': 1, 'x_col': 2, 'y_col': 3},
@@ -115,34 +115,26 @@ def delete_downloaded_data(ann):
     except OSError:
         pass
     
-def get_coords_in_roi(all_coords,roi):
-    """
-        Returns the xy coordinates of the rectangular roi being processed
-    """
-    #convert to nm --> sr image pixel size
-    xstart = roi[0]
-    xstop = roi[0]+roi[2]
-    ystart = roi[1]
-    ystop = roi[1]+roi[3]
-    return all_coords[(all_coords[:,0] > xstart) & (all_coords[:,0] < xstop)
-                      & (all_coords[:,1] > ystart) & (all_coords[:,1] < ystop)]
-    
-def process_data(conn,image,rectangles,coords):
+def process_data(image,sr_pix_size,nm_per_pixel,coords):
     """
         Calculates the neighbour distance in all the rectangular rois
     """    
-    dist_bins = np.arange(0,200,1)
-    num_rois = len(rectangles)
-    nn_hist = np.zeros((dist_bins.shape[0]-1,num_rois))
-    nn_data = []
-    for i,rect in enumerate(rectangles):
-        locs = get_coords_in_roi(coords,rect)
-        nn = nearest_neighbour(locs)
-        nn_data.append(nn)
-        hist,edges = np.histogram(nn,bins=dist_bins)
-        nn_hist[:,i] = hist
-    return nn_data,nn_hist,edges
-                            
+    frame_width = image.getSizeX() 
+    frame_height = image.getSizeY()
+    num_frames = image.getSizeT() #need to check, this might actually be Z
+    sizeZ = image.getSizeZ()
+    sizeC = image.getSizeC()
+    binsx = (frame_width * nm_per_pixel) / sr_pix_size
+    binsy = (frame_height * nm_per_pixel) / sr_pix_size
+    hist_data = calc_hist('2d',coords,num_frames,binsy,binsx)
+    def plane_gen():
+        for z in range(sizeZ):
+            for c in range(sizeC):
+                for t in range(num_frames):
+                    plane = hist_data[:,:]
+                    yield plane     
+    return plane_gen()
+                   
 def run_processing(conn,script_params):
     file_anns = []
     message = ""
@@ -169,34 +161,8 @@ def run_processing(conn,script_params):
     if ('txt' in ext) or ('csv' in ext):
         path_to_data = download_data(ann)
         coords = parse_sr_data(path_to_data,file_type,cam_pix_size)
-        rectangles = get_rectangles(conn,image_id,sr_pix_size)
-        nn_data,nn_hist,edges = process_data(conn,image,rectangles,coords)
-        
-        file_name = "near_neighbours_" + ann.getFile().getName()[:-4] + '.csv'
-        print file_name
-        try:
-            f = open(file_name,'w')
-            for r in range(len(nn_data)):
-                row = nn_data[r]
-                f.write(','.join([str(c) for c in row])+'\n')
-        finally:
-            f.close()
+        hist_data = process_data(image,coords,sr_pix_size,cam_pix_size)
 
-        new_file_ann, faMessage = script_util.createLinkFileAnnotation(
-            conn, file_name, image, output="Wrote near neighbour csv (Excel) file",
-            mimetype="text/csv", desc=None)
-        if new_file_ann:
-            file_anns.append(new_file_ann)
-
-        if not file_anns:
-            faMessage = "No Analysis files created. See 'Info' or 'Error' for"\
-                " more details"
-        elif len(file_anns) > 1:
-            faMessage = "Created %s csv (Excel) files" % len(file_anns)
-        message += faMessage
-    else:
-        message = 'file annotation must be txt or csv'
-        return message
     # clean up
     delete_downloaded_data(ann)
     
@@ -212,7 +178,7 @@ def run_as_script():
     
     fileTypes = [k for k in FILE_TYPES.iterkeys()]
 
-    client = scripts.client('Nearest_Neighbours_In_ROIs.py', """This script calculates nearest nieghbour distances from localisations in a region of interest""",
+    client = scripts.client('Ripley_Lfunction.py', """This script searches an attached SR dataset for coords defined by an ROI""",
 
     scripts.String("Data_Type", optional=False, grouping="01",
         description="Choose source of images (only Image supported)", values=dataTypes, default="Image"),
