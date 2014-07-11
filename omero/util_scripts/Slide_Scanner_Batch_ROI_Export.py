@@ -9,11 +9,11 @@ import smtplib
 import re
 import numpy as np
 import math
-# import omero
-# import omero.scripts as scripts
-# from omero.gateway import BlitzGateway
-# from omero.rtypes import rstring, rlong, robject
-# import omero.util.script_utils as script_utils
+import omero
+import omero.scripts as scripts
+from omero.gateway import BlitzGateway
+from omero.rtypes import rstring, rlong, robject
+import omero.util.script_utils as script_utils
 
 import os
 
@@ -72,129 +72,114 @@ def getRectangles(conn, imageId):
 
     return rois
 
-def get_block(source,row,col,block_size):
+def get_block_coords(row,col,block_size,box):
 
     # compute starting row/col in source image of block of data
-    source_min_row = 1 + block_size[0] * (row - 1)
-    source_min_col = 1 + block_size[1] * (col - 1)
-    source_max_row = source_min_row + block_size[0] - 1
-    source_max_col = source_min_col + block_size[1] - 1
-#     if ~options.PadPartialBlocks
-    source_max_row = min(source_max_row,source.shape[0])
-    source_max_col = min(source_max_col,source.shape[1])
-#     end
-    print source_max_row
-    print source_max_col
-    # set block struct location (before border pixels are considered)
-    location = [source_min_row, source_min_col]
-    print location
-    # add border pixels around the block of data
-#     source_min_row = source_min_row - options.BorderSize[0]
-#     source_max_row = source_max_row + options.BorderSize[0];
-#     source_min_col = source_min_col - options.BorderSize[1];
-#     source_max_col = source_max_col + options.BorderSize[1];
+    source_min_row = block_size[0] * row + box[1]
+    source_min_col = block_size[1] * col + box[0]
+    source_max_row = source_min_row + block_size[0]
+    source_max_col = source_min_col + block_size[1]
+    source_max_row = min(source_max_row,box[1] + box[3])
+    source_max_col = min(source_max_col,box[0] + box[2])
     
     # setup indices for target block
-    total_rows = source_max_row - source_min_row + 1
-    total_cols = source_max_col - source_min_col + 1
-    
-    # for interior blocks
-#    if (source_min_row >= 1) and (source_max_row <= source.getSizeY()) and (source_min_col >= 1) and (source_max_col <= source.getSizeX()):
-    if (source_min_row >= 1) and (source_max_row <= source.shape[0]) and (source_min_col >= 1) and (source_max_col <= source.shape[1]):        
-        # no padding necessary, just read data and return
-#        pixels = source.getPrimaryPixels()
-        pixels = source
+    total_rows = source_max_row - source_min_row
+    total_cols = source_max_col - source_min_col
 
-#        source_data = source.readRegion(...
-#            [source_min_row                      source_min_col],...
-#            [source_max_row - source_min_row + 1 source_max_col - source_min_col + 1]);        
-#        data = pixels.getTiles(zctTileList)
-        data = pixels[source_min_row:source_min_row + source_max_row - source_min_row + 1,
-                      source_min_col:source_min_col + source_max_col - source_min_col + 1]
-        
-        
+    if (source_min_row >= 0) and (source_max_row <= box[1] + box[3]) and (source_min_col >= 0) and (source_max_col <= box[0] + box[2]):        
+        pass
     else:
-        print 'in else'
         # setup target indices variables
-        target_min_row = 1
+        target_min_row = 0
         target_max_row = total_rows
-        target_min_col = 1
+        target_min_col = 0
         target_max_col = total_cols
-        
         # check each edge of the requested block for edge
-        if source_min_row < 1:
+        if source_min_row < 0:
             delta = 1 - source_min_row
             source_min_row = source_min_row + delta
             target_min_row = target_min_row + delta
         
-        if source_max_row > source.shape[0]:
-            delta = source_max_row - source.shape[0]
+        if source_max_row > box[3]:
+            delta = source_max_row - box[3]
             source_max_row = source_max_row - delta
             target_max_row = target_max_row - delta
         
-        if source_min_col < 1:
+        if source_min_col < 0:
             delta = 1 - source_min_col
             source_min_col = source_min_col + delta
             target_min_col = target_min_col + delta
         
-        if source_max_col > source.shape[1]:
-            delta = source_max_col - source.shape[1]
+        if source_max_col > box[2]:
+            delta = source_max_col - box[2]
             source_max_col = source_max_col - delta
             target_max_col = target_max_col - delta
-        
-#        pixels = source.getPrimaryPixels()
-        pixels = source
-#        source_data = source.readRegion(...
-#            [source_min_row                      source_min_col],...
-#            [source_max_row - source_min_row + 1 source_max_col - source_min_col + 1]);        
-#        data = pixels.getTiles(zctTileList)
-        data = pixels[source_min_row:source_min_row + source_max_row - source_min_row + 1,
-                      source_min_col:source_min_col + source_max_col - source_min_col + 1]        
-#        allocate target block (this implicitly also handles constant value
-#        padding around the edges of the partial blocks and boundary
-#        blocks)
-#        pad_value = 0.0
-#        data = np.tile(pad_value,(total_rows, total_cols, source.getSizeC()))
-#        
-#        # copy valid data into target block
-#        target_rows = np.arange(target_min_row,target_max_row)
-#        target_cols = np.arange(target_min_col,target_max_col)
-#        data[target_rows,target_cols,:] = data
 
-    print data.shape
-    
-def block_tile_gen(source,box):
-    #pixels is the raw pixel store
-    
-    #first work out the location and number blocks required
-    block_size = (50,50)
+    x = source_min_col
+    y = source_min_row
+    w = source_max_col - source_min_col
+    h = source_max_row - source_min_row
+    return (x,y,w,h)
+
+def get_block(source,box,block):
+    # need a tile generator to get all the planes within the ROI
+    xbox, ybox, wbox, hbox, z1box, z2box, t1box, t2box = box
+    x,y,w,h = block
+    pixels = source.getPrimaryPixels()
+    sizeZ = z2box-z1box + 1
+    sizeT = t2box-t1box + 1
+    sizeC = source.getSizeC()
+    zctTileList = []
+    tile = (x, y, w, h)
+    for z in range(z1box, z2box+1):
+        for c in range(sizeC):
+            for t in range(t1box, t2box+1):
+                zctTileList.append((z, c, t, tile))
+
+    def tileGen():
+        for i, t in enumerate(pixels.getTiles(zctTileList)):
+            yield t
+
+    return tileGen()
+
+def put_blocks(source,tiles,source_coords,box):
+    sizeZ = source.getSizeZ()
+    sizeT = source.getSizeT()
+    sizeC = source.getSizeC()
+    tile_data = np.zeros((box[3],box[2],sizeC))
+    for i,tile in enumerate(tiles):
+        target_min_row = source_coords[i][1] - box[1]
+        target_min_col = source_coords[i][0] - box[0]
+        target_max_row = target_min_row + source_coords[i][3]
+        target_max_col = target_min_col + source_coords[i][2]
+        for i,t in enumerate(tile):
+            tile_data[target_min_row:target_max_row,target_min_col:target_max_col,i] = t
+            
+    def plane_gen():
+        for z in range(sizeZ):
+            for c in range(sizeC):
+                for t in range(sizeT):
+                    plane = tile_data[:,:,c]
+                    yield plane
+                    
+    return plane_gen()
+        
+def block_gen(source,box):
+    block_size = (500,500)
     
     # total number of blocks we'll process (including partials)
     mblocks = int(math.ceil(float(box[2]) / float(block_size[0])))
     nblocks = int(math.ceil(float(box[3]) / float(block_size[1])))
-
-    # determine the block indices
-    #get_block_indices(box,mblock,nblocks)
-    
-    """ Given [x,y,w,h] of the region in the image to crop,
-    break up the region into blocks of a given size.
-    
-    Determine the [x,y,w,h] of each block required from the image
-    
-    Get the block from the image.
-    
-    Determine where in the new data set the block needs to go
-    
-    Make the new dataset
-    
-    Write the dataset """
-
     num_blocks = mblocks * nblocks
-    blk_coords = np.zeros((num_blocks,2))
-    blk_coords[0,:] = box[0:2]
-    for row in range(1,nblocks):
-        for col in range(1,mblocks):
-            get_block(source,row,col,block_size)
+    tiles = []
+    blk_coords = []
+    for row in range(0,nblocks):
+        for col in range(0,mblocks):
+            x,y,w,h = get_block_coords(row,col,block_size,box)
+            blk_coords.append((x,y,w,h))
+            tile = get_block(source,box,(x,y,w,h))
+            tiles.append(tile)
+    return put_blocks(source,tiles,blk_coords,box)
     
 def process_image(conn, imageId, parameterMap):
     """
@@ -252,6 +237,7 @@ def process_image(conn, imageId, parameterMap):
     images = []
     iIds = []
     for r in rois:
+        
         x, y, w, h, z1, z2, t1, t2 = r
         print "  ROI x: %s y: %s w: %s h: %s z1: %s z2: %s t1: %s t2: %s"\
             % (x, y, w, h, z1, z2, t1, t2)
@@ -267,18 +253,14 @@ def process_image(conn, imageId, parameterMap):
             for c in range(sizeC):
                 for t in range(t1, t2+1):
                     zctTileList.append((z, c, t, tile))
-                    
-        block_tile_gen(pixels,r)
-
-        def tileGen():
-            for i, t in enumerate(pixels.getTiles(zctTileList)):
-                yield t
+        
+        tile = block_gen(image,r)
 
         print "sizeZ, sizeC, sizeT", sizeZ, sizeC, sizeT
         description = "Created from image:\n  Name: %s\n  Image ID: %d"\
             " \n x: %d y: %d" % (imageName, imageId, x, y)
         newImg = conn.createImageFromNumpySeq(
-            tileGen(), imageName,
+            tile, imageName,
             sizeZ=sizeZ, sizeC=sizeC, sizeT=sizeT,
             description=description, sourceImageId=imageId)
 
@@ -559,11 +541,12 @@ def runAsScript():
         printDuration()
 
 if __name__ == "__main__":
-    #runAsScript()
-    box = [150, 150, 100, 225]
-    Largeshape = [400, 400]
-    block_size = [50, 50]
-    mblocks = float(box[2])/float(block_size[0])
-    nblocks = float(box[3])/float(block_size[1])
-    largeimage = np.ones((400,400))
-    block_tile_gen(largeimage,box)
+    runAsScript()
+#     box = [150, 150, 75, 225]
+#     Largeshape = [400, 400]
+#     block_size = [50, 50]
+#     mblocks = float(box[2])/float(block_size[0])
+#     nblocks = float(box[3])/float(block_size[1])
+#     largeimage = np.ones((400,400))
+#     tile = block_gen(largeimage,box)
+#     print tile.shape
