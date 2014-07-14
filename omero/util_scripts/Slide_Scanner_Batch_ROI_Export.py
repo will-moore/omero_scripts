@@ -12,9 +12,10 @@ import math
 import omero
 import omero.scripts as scripts
 from omero.gateway import BlitzGateway
-from omero.rtypes import rstring, rlong, robject
+from omero.rtypes import rstring, rlong, robject, rint
 import omero.util.script_utils as script_utils
-
+import logging
+logger = logging.getLogger(__name__)
 import os
 
 import time
@@ -22,42 +23,42 @@ startTime = 0
 
 ADMIN_EMAIL = 'admin@omerocloud.qbi.uq.edu.au'
 
-def createImageFromNumpySeq (conn, zctPlanes, imageName, sizeZ=1, sizeC=1, sizeT=1, (x,y,w,h), description=None, dataset=None, sourceImageId=None, channelList=None):
+def createImageFromNumpyTileSeq (conn, zctPlanes, (x,y,w,h),imageName, sizeZ=1, sizeC=1, sizeT=1, description=None, dataset=None, sourceImageId=None, channelList=None):
     """
-This version of createImageFromNumpySeq is a temporary workaround for ticket 12459 - 
-original version does not allow creating of new images tile-by-tile
-D.matthews QBI
-
-Creates a new multi-dimensional image from the sequence of 2D np arrays in zctPlanes.
-zctPlanes should be a generator of np 2D arrays of shape (sizeY, sizeX) ordered
-to iterate through T first, then C then Z.
-Example usage:
-original = conn.getObject("Image", 1)
-sizeZ = original.getSizeZ()
-sizeC = original.getSizeC()
-sizeT = original.getSizeT()
-clist = range(sizeC)
-zctList = []
-for z in range(sizeZ):
-for c in clist:
-for t in range(sizeT):
-zctList.append( (z,c,t) )
-def planeGen():
-planes = original.getPrimaryPixels().getPlanes(zctList)
-for p in planes:
-# perform some manipulation on each plane
-yield p
-createImageFromNumpySeq (planeGen(), imageName, sizeZ=sizeZ, sizeC=sizeC, sizeT=sizeT, sourceImageId=1, channelList=clist)
-
-@param session An OMERO service factory or equivalent with getQueryService() etc.
-@param zctPlanes A generator of np 2D arrays, corresponding to Z-planes of new image.
-@param imageName Name of new image
-@param description Description for the new image
-@param dataset If specified, put the image in this dataset. omero.model.Dataset object
-@param sourceImageId If specified, copy this image with metadata, then add pixel data
-@param channelList Copies metadata from these channels in source image (if specified). E.g. [0,2]
-@return The new OMERO image: omero.model.ImageI
-"""
+    This version of createImageFromNumpySeq is a temporary workaround for ticket 12459 - 
+    original version does not allow creating of new images tile-by-tile
+    D.matthews QBI
+    
+    Creates a new multi-dimensional image from the sequence of 2D np arrays in zctPlanes.
+    zctPlanes should be a generator of np 2D arrays of shape (sizeY, sizeX) ordered
+    to iterate through T first, then C then Z.
+    Example usage:
+    original = conn.getObject("Image", 1)
+    sizeZ = original.getSizeZ()
+    sizeC = original.getSizeC()
+    sizeT = original.getSizeT()
+    clist = range(sizeC)
+    zctList = []
+    for z in range(sizeZ):
+    for c in clist:
+    for t in range(sizeT):
+    zctList.append( (z,c,t) )
+    def planeGen():
+    planes = original.getPrimaryPixels().getPlanes(zctList)
+    for p in planes:
+    # perform some manipulation on each plane
+    yield p
+    createImageFromNumpySeq (planeGen(), imageName, sizeZ=sizeZ, sizeC=sizeC, sizeT=sizeT, sourceImageId=1, channelList=clist)
+    
+    @param session An OMERO service factory or equivalent with getQueryService() etc.
+    @param zctPlanes A generator of np 2D arrays, corresponding to Z-planes of new image.
+    @param imageName Name of new image
+    @param description Description for the new image
+    @param dataset If specified, put the image in this dataset. omero.model.Dataset object
+    @param sourceImageId If specified, copy this image with metadata, then add pixel data
+    @param channelList Copies metadata from these channels in source image (if specified). E.g. [0,2]
+    @return The new OMERO image: omero.model.ImageI
+    """
     queryService = conn.getQueryService()
     pixelsService = conn.getPixelsService()
     rawPixelsStore = conn.c.sf.createRawPixelsStore() # Make sure we don't get an existing rpStore
@@ -102,16 +103,6 @@ createImageFromNumpySeq (planeGen(), imageName, sizeZ=sizeZ, sizeC=sizeC, sizeT=
     
     def uploadPlane(plane, z, c, t, x, y, w, h, convertToType):
         # if we're given a np dtype, need to convert plane to that dtype
-        """
-        void setTile(byte[] buffer,
-           int z,
-           int c,
-           int t,
-           int x,
-           int y,
-           int w,
-           int h)
-        """
         if convertToType is not None:
             p = np.zeros(plane.shape, dtype=convertToType)
             p += plane
@@ -151,9 +142,9 @@ createImageFromNumpySeq (planeGen(), imageName, sizeZ=sizeZ, sizeC=sizeC, sizeT=
     except Exception, e:
         logger.error("Failed to close rawPixelsStore", exc_info=True)
         if exc is None:
-             exc = e
+            exc = e
     if exc is not None:
-       raise exc
+        raise exc
     
     try: # simply completing the generator - to avoid a GeneratorExit error.
         zctPlanes.next()
@@ -315,7 +306,7 @@ def put_blocks(source,tiles,source_coords,box):
     return plane_gen()
         
 def block_gen(source,box):
-    block_size = (500,500)
+    block_size = (1000,1000)
     
     # total number of blocks we'll process (including partials)
     mblocks = int(math.ceil(float(box[2]) / float(block_size[0])))
@@ -328,7 +319,6 @@ def block_gen(source,box):
             x,y,w,h = get_block_coords(row,col,block_size,box)
             blk_coords.append((x,y,w,h))
             tile = get_block(source,box,(x,y,w,h))
-            tiles.append(tile)
     return put_blocks(source,tiles,blk_coords,box)
     
 def process_image(conn, imageId, parameterMap):
@@ -409,10 +399,10 @@ def process_image(conn, imageId, parameterMap):
         print "sizeZ, sizeC, sizeT", sizeZ, sizeC, sizeT
         description = "Created from image:\n  Name: %s\n  Image ID: %d"\
             " \n x: %d y: %d" % (imageName, imageId, x, y)
-        newImg = conn.createImageFromNumpySeq(
+        newImg = conn.createImageFromNumpyTileSeq(conn,
             tile, imageName,
             sizeZ=sizeZ, sizeC=sizeC, sizeT=sizeT,
-            description=description, sourceImageId=imageId)
+            description=description)
 
         print "New Image Id = %s" % newImg.getId()
 
