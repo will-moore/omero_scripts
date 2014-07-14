@@ -22,7 +22,157 @@ startTime = 0
 
 ADMIN_EMAIL = 'admin@omerocloud.qbi.uq.edu.au'
 
+def createImageFromNumpySeq (conn, zctPlanes, imageName, sizeZ=1, sizeC=1, sizeT=1, (x,y,w,h), description=None, dataset=None, sourceImageId=None, channelList=None):
+    """
+This version of createImageFromNumpySeq is a temporary workaround for ticket 12459 - 
+original version does not allow creating of new images tile-by-tile
+D.matthews QBI
 
+Creates a new multi-dimensional image from the sequence of 2D np arrays in zctPlanes.
+zctPlanes should be a generator of np 2D arrays of shape (sizeY, sizeX) ordered
+to iterate through T first, then C then Z.
+Example usage:
+original = conn.getObject("Image", 1)
+sizeZ = original.getSizeZ()
+sizeC = original.getSizeC()
+sizeT = original.getSizeT()
+clist = range(sizeC)
+zctList = []
+for z in range(sizeZ):
+for c in clist:
+for t in range(sizeT):
+zctList.append( (z,c,t) )
+def planeGen():
+planes = original.getPrimaryPixels().getPlanes(zctList)
+for p in planes:
+# perform some manipulation on each plane
+yield p
+createImageFromNumpySeq (planeGen(), imageName, sizeZ=sizeZ, sizeC=sizeC, sizeT=sizeT, sourceImageId=1, channelList=clist)
+
+@param session An OMERO service factory or equivalent with getQueryService() etc.
+@param zctPlanes A generator of np 2D arrays, corresponding to Z-planes of new image.
+@param imageName Name of new image
+@param description Description for the new image
+@param dataset If specified, put the image in this dataset. omero.model.Dataset object
+@param sourceImageId If specified, copy this image with metadata, then add pixel data
+@param channelList Copies metadata from these channels in source image (if specified). E.g. [0,2]
+@return The new OMERO image: omero.model.ImageI
+"""
+    queryService = conn.getQueryService()
+    pixelsService = conn.getPixelsService()
+    rawPixelsStore = conn.c.sf.createRawPixelsStore() # Make sure we don't get an existing rpStore
+    containerService = conn.getContainerService()
+    updateService = conn.getUpdateService()
+    
+    #import np
+    
+    def createImage(firstPlane, channelList):
+        """ Create our new Image once we have the first plane in hand """
+        convertToType = None
+        sizeY, sizeX = firstPlane.shape
+        if sourceImageId is not None:
+            if channelList is None:
+                channelList = range(sizeC)
+            iId = pixelsService.copyAndResizeImage(sourceImageId, rint(sizeX), rint(sizeY), rint(sizeZ), rint(sizeT), channelList, None, False, conn.SERVICE_OPTS)
+            # need to ensure that the plane dtype matches the pixels type of our new image
+            img = conn.getObject("Image", iId.getValue())
+            newPtype = img.getPrimaryPixels().getPixelsType().getValue()
+            omeroToNumpy = {'int8':'int8', 'uint8':'uint8', 'int16':'int16', 'uint16':'uint16', 'int32':'int32', 'uint32':'uint32', 'float':'float32', 'double':'double'}
+            if omeroToNumpy[newPtype] != firstPlane.dtype.name:
+                convertToType = getattr(np, omeroToNumpy[newPtype])
+            img._obj.setName(rstring(imageName))
+            updateService.saveObject(img._obj, conn.SERVICE_OPTS)
+        else:
+            # need to map np pixel types to omero - don't handle: bool_, character, int_, int64, object_
+            pTypes = {'int8':'int8', 'int16':'int16', 'uint16':'uint16', 'int32':'int32', 'float_':'float', 'float8':'float',
+                        'float16':'float', 'float32':'float', 'float64':'double', 'complex_':'complex', 'complex64':'complex'}
+            dType = firstPlane.dtype.name
+            if dType not in pTypes: # try to look up any not named above
+                pType = dType
+            else:
+                pType = pTypes[dType]
+            pixelsType = queryService.findByQuery("from PixelsType as p where p.value='%s'" % pType, None) # omero::model::PixelsType
+            if pixelsType is None:
+                raise Exception("Cannot create an image in omero from np array with dtype: %s" % dType)
+            channelList = range(sizeC)
+            iId = pixelsService.createImage(sizeX, sizeY, sizeZ, sizeT, channelList, pixelsType, imageName, description, conn.SERVICE_OPTS)
+    
+        imageId = iId.getValue()
+        return containerService.getImages("Image", [imageId], None, conn.SERVICE_OPTS)[0], convertToType
+    
+    def uploadPlane(plane, z, c, t, x, y, w, h, convertToType):
+        # if we're given a np dtype, need to convert plane to that dtype
+        """
+        void setTile(byte[] buffer,
+           int z,
+           int c,
+           int t,
+           int x,
+           int y,
+           int w,
+           int h)
+        """
+        if convertToType is not None:
+            p = np.zeros(plane.shape, dtype=convertToType)
+            p += plane
+            plane = p
+        byteSwappedPlane = plane.byteswap()
+        convertedPlane = byteSwappedPlane.tostring();
+        #rawPixelsStore.setPlane(convertedPlane, z, c, t, conn.SERVICE_OPTS)
+        rawPixelsStore.setTile(convertedPlane, z, c, t, x, y, w, h, conn.SERVICE_OPTS)
+    
+    image = None
+    dtype = None
+    channelsMinMax = []
+    exc = None
+    try:
+        for theZ in range(sizeZ):
+            for theC in range(sizeC):
+                for theT in range(sizeT):
+                    plane = zctPlanes.next()
+                    if image == None: # use the first plane to create image.
+                        image, dtype = createImage(plane, channelList)
+                        pixelsId = image.getPrimaryPixels().getId().getValue()
+                        rawPixelsStore.setPixelsId(pixelsId, True, conn.SERVICE_OPTS)
+                    uploadPlane(plane, theZ, theC, theT, x, y, w, h, dtype)
+                    # init or update min and max for this channel
+                    minValue = plane.min()
+                    maxValue = plane.max()
+                    if len(channelsMinMax) < (theC +1): # first plane of each channel
+                        channelsMinMax.append( [minValue, maxValue] )
+                    else:
+                        channelsMinMax[theC][0] = min(channelsMinMax[theC][0], minValue)
+                        channelsMinMax[theC][1] = max(channelsMinMax[theC][1], maxValue)
+    except Exception, e:
+        logger.error("Failed to setPlane() on rawPixelsStore while creating Image", exc_info=True)
+        exc = e
+    try:
+        rawPixelsStore.close(conn.SERVICE_OPTS)
+    except Exception, e:
+        logger.error("Failed to close rawPixelsStore", exc_info=True)
+        if exc is None:
+             exc = e
+    if exc is not None:
+       raise exc
+    
+    try: # simply completing the generator - to avoid a GeneratorExit error.
+        zctPlanes.next()
+    except StopIteration:
+        pass
+    
+    for theC, mm in enumerate(channelsMinMax):
+        pixelsService.setChannelGlobalMinMax(pixelsId, theC, float(mm[0]), float(mm[1]), conn.SERVICE_OPTS)
+        #resetRenderingSettings(renderingEngine, pixelsId, theC, mm[0], mm[1])
+    
+    # put the image in dataset, if specified.
+    if dataset:
+        link = omero.model.DatasetImageLinkI()
+        link.parent = omero.model.DatasetI(dataset.getId(), False)
+        link.child = omero.model.ImageI(image.id.val, False)
+        updateService.saveObject(link, conn.SERVICE_OPTS)
+    
+    return conn.ImageWrapper(image)
+    
 def printDuration(output=True):
     global startTime
     if startTime == 0:
