@@ -16,7 +16,8 @@ from distance_functions import nearest_neighbour
 
 FILE_TYPES = {'localizer':{'numColumns': 12, 'name': 'localizer', 'frame': 0, 'intensity': 1, 'z_col': None, 'psf_sigma': 2, 'headerlines': 5, 'x_col': 3, 'y_col': 4}, 
               'quickpalm':{'numColumns': 15, 'name': 'quickpalm', 'frame': 14, 'intensity': 1, 'z_col': 6, 'psf_sigma': None, 'headerlines': 1, 'x_col': 2, 'y_col': 3},
-              'zeiss2d':{'numColumns': 13, 'name': 'zeiss2d', 'frame': 1, 'intensity': 7, 'z_col': None, 'psf_sigma': 6, 'headerlines': 1, 'x_col': 4, 'y_col': 5}}
+              'zeiss2d':{'numColumns': 13, 'name': 'zeiss2d', 'frame': 1, 'intensity': 7, 'z_col': None, 'psf_sigma': 6, 'headerlines': 1, 'x_col': 4, 'y_col': 5},
+              'zeiss2d2chan':{'numColumns': 13, 'name': 'zeiss2d', 'frame': 1, 'intensity': 7, 'z_col': None, 'psf_sigma': 6, 'headerlines': 1, 'x_col': 4, 'y_col': 5,'chan_col':14}}
 PATH = os.path.join("/home/omero/OMERO.data/", "download")
 
 def get_rectangles(conn, imageId, pix_size):
@@ -59,14 +60,41 @@ def get_rectangles(conn, imageId, pix_size):
             rois.append((x*pix_size, y*pix_size, width*pix_size, height*pix_size, zStart, zEnd, tStart, tEnd))
 
     return rois
+
+def get_all_locs_in_chan(all_data,col,chan=0,chancol=None):
+    if chancol:
+        idx = np.where(all_data[:,chancol] == chan)[0]
+    else:
+        idx = np.ones((all_data.shape[0]),dtype=bool)
+    print all_data.shape
+    print idx.shape
+    coords = np.zeros((idx.shape[0]))
+    coords[:] = all_data[idx,col]
+    print coords.shape
+    return coords
+
+def get_coords_in_roi(all_coords,roi):
+    """
+        Returns the xy coordinates of the rectangular roi being processed
+    """
+    #convert to nm --> sr image pixel size
+    xstart = roi[0]
+    xstop = roi[0]+roi[2]
+    ystart = roi[1]
+    ystop = roi[1]+roi[3]
+    return all_coords[(all_coords[:,0] > xstart) & (all_coords[:,0] < xstop)
+                      & (all_coords[:,1] > ystart) & (all_coords[:,1] < ystop)]
     
-def get_all_xycoords(all_data,xcol,ycol,pix_size):
+def get_all_xycoords(all_data,xcol,ycol,sizeC,chancol,pix_size):
     """
         Returns the xy coordinates from the input data in a numpy array
-    """
-    coords = np.zeros((all_data.shape[0],2))
-    coords[:,0] = all_data[:,xcol]*pix_size #convert to nm --> camera pixel size
-    coords[:,1] = all_data[:,ycol]*pix_size #convert to nm --> camera pixel size
+    """   
+    coords = np.zeros((sizeC,all_data.shape[0],2))
+    print coords.shape
+    for c in range(sizeC):
+        print get_all_locs_in_chan(all_data,xcol,c,chancol).shape
+        coords[c,:,0] = get_all_locs_in_chan(all_data,xcol,c,chancol)*pix_size #convert to nm --> camera pixel size
+        coords[c,:,1] = get_all_locs_in_chan(all_data,ycol,c,chancol)*pix_size #convert to nm --> camera pixel size       
     return coords
                     
 def parse_sr_data(path,file_type,pix_size=95):
@@ -79,6 +107,12 @@ def parse_sr_data(path,file_type,pix_size=95):
     num_columns = working_file_type['numColumns']
     xcol = working_file_type['x_col']
     ycol = working_file_type['y_col']
+    if 'zeiss2d2chan' in file_type:
+        sizeC = 2
+        chancol = FILE_TYPES[file_type]['chan_col']
+    else:
+        sizeC = 1
+        chancol = None
     s = time.time()
     try:
         data = np.genfromtxt(path,usecols=range(num_columns),skip_header=headerlines,dtype='float')
@@ -88,7 +122,7 @@ def parse_sr_data(path,file_type,pix_size=95):
         print 'there was a problem parsing localisation data'
         raise
     print 'reading the file took:',time.time()-s,'seconds'
-    coords = get_all_xycoords(data,xcol,ycol,pix_size)
+    coords = get_all_xycoords(data,xcol,ycol,sizeC,chancol,pix_size)
     return coords    
 
 def download_data(ann):
@@ -114,34 +148,28 @@ def delete_downloaded_data(ann):
         os.remove(file_path)
     except OSError:
         pass
-    
-def get_coords_in_roi(all_coords,roi):
-    """
-        Returns the xy coordinates of the rectangular roi being processed
-    """
-    #convert to nm --> sr image pixel size
-    xstart = roi[0]
-    xstop = roi[0]+roi[2]
-    ystart = roi[1]
-    ystop = roi[1]+roi[3]
-    return all_coords[(all_coords[:,0] > xstart) & (all_coords[:,0] < xstop)
-                      & (all_coords[:,1] > ystart) & (all_coords[:,1] < ystop)]
-    
+      
 def process_data(conn,image,rectangles,coords):
     """
         Calculates the neighbour distance in all the rectangular rois
     """    
     dist_bins = np.arange(0,200,1)
     num_rois = len(rectangles)
-    nn_hist = np.zeros((dist_bins.shape[0]-1,num_rois))
+    nn_hist = np.zeros((coords.shape[0],dist_bins.shape[0]-1,num_rois))
     nn_data = []
     for i,rect in enumerate(rectangles):
-        locs = get_coords_in_roi(coords,rect)
-        nn = nearest_neighbour(locs)
+        locs_list = []
+        for c in range(coords.shape[0]):
+            locs = get_coords_in_roi(coords[c,:,:],rect)
+            locs_list.append(locs)
+            
+        nn = np.zeros((locs_list[0].shape[0],locs_list[0].shape[1]))
+        for c in range(coords.shape[0]):
+            nn[:,c] = nearest_neighbour(locs_list[c])
+            hist,edges = np.histogram(nn[:,c],bins=dist_bins)
+            nn_hist[c,:,i] = hist
         nn_data.append(nn)
-        hist,edges = np.histogram(nn,bins=dist_bins)
-        nn_hist[:,i] = hist
-    return nn_data,nn_hist,edges
+    return nn_data,nn_hist
                             
 def run_processing(conn,script_params):
     file_anns = []
@@ -153,7 +181,7 @@ def run_processing(conn,script_params):
         message = 'Could not find specified image'
         return message
         
-    file_id = script_params['FileID']
+    file_id = script_params['AnnotationID']
     ann = conn.getObject("Annotation",file_id)
     if not ann:
         message = 'Could not find specified annotation'
@@ -170,7 +198,7 @@ def run_processing(conn,script_params):
         path_to_data = download_data(ann)
         coords = parse_sr_data(path_to_data,file_type,cam_pix_size)
         rectangles = get_rectangles(conn,image_id,sr_pix_size)
-        nn_data,nn_hist,edges = process_data(conn,image,rectangles,coords)
+        nn_data,nn_hist = process_data(conn,image,rectangles,coords)
         
         file_name = "near_neighbours_" + ann.getFile().getName()[:-4] + '.csv'
         print file_name
@@ -220,7 +248,7 @@ def run_as_script():
     scripts.Int("ImageID", optional=False, grouping="02",
         description="ID of super resolved image to process"),
         
-    scripts.Int("FileID", optional=False, grouping="03",
+    scripts.Int("AnnotationID", optional=False, grouping="03",
         description="ID of file to process"),
         
     scripts.String("File_Type", optional=False, grouping="04",
