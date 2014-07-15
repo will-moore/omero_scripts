@@ -163,7 +163,7 @@ def process_data(conn,image,rectangles,coords):
             locs = get_coords_in_roi(coords[c,:,:],rect)
             locs_list.append(locs)
             
-        nn = np.zeros((locs_list[0].shape[0],locs_list[0].shape[1]))
+        nn = np.zeros((locs_list[0].shape[0],coords.shape[0]))
         for c in range(coords.shape[0]):
             nn[:,c] = nearest_neighbour(locs_list[c])
             hist,edges = np.histogram(nn[:,c],bins=dist_bins)
@@ -206,7 +206,8 @@ def run_processing(conn,script_params):
             f = open(file_name,'w')
             for r in range(len(nn_data)):
                 row = nn_data[r]
-                f.write(','.join([str(c) for c in row])+'\n')
+                for chan in range(row.shape[1]):
+                    f.write(','.join([str(c) for c in row[:,chan]])+'\n')
         finally:
             f.close()
 
