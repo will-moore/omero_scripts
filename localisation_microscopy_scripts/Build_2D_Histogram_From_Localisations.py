@@ -16,8 +16,8 @@ from hist_data import calc_hist
 
 FILE_TYPES = {'localizer':{'numColumns': 12, 'name': 'localizer', 'frame': 0, 'intensity': 1, 'z_col': None, 'psf_sigma': 2, 'headerlines': 5, 'x_col': 3, 'y_col': 4}, 
               'quickpalm':{'numColumns': 15, 'name': 'quickpalm', 'frame': 14, 'intensity': 1, 'z_col': 6, 'psf_sigma': None, 'headerlines': 1, 'x_col': 2, 'y_col': 3},
-              'zeiss2d':{'numColumns': 13, 'name': 'zeiss2d', 'frame': 1, 'intensity': 7, 'z_col': None, 'psf_sigma': 6, 'headerlines': 1, 'x_col': 4, 'y_col': 5},
-              'zeiss2d2chan':{'numColumns': 13, 'name': 'zeiss2d', 'frame': 1, 'intensity': 7, 'z_col': None, 'psf_sigma': 6, 'headerlines': 1, 'x_col': 4, 'y_col': 5,'chan_col':14}}
+              'zeiss2d':{'numColumns': 13, 'name': 'zeiss2d', 'frame': 1, 'intensity': 7, 'z_col': None, 'psf_sigma': 6, 'headerlines': 1, 'x_col': 5, 'y_col': 6},
+              'zeiss2d2chan':{'numColumns': 13, 'name': 'zeiss2d2chan', 'frame': 1, 'intensity': 7, 'z_col': None, 'psf_sigma': 6, 'headerlines': 1, 'x_col': 5, 'y_col': 6,'chan_col':14}}
 PATH = os.path.join("/home/omero/OMERO.data/", "download")
 
 def get_all_locs_in_chan(all_data,col,chan=0,chancol=None):
@@ -25,11 +25,8 @@ def get_all_locs_in_chan(all_data,col,chan=0,chancol=None):
         idx = np.where(all_data[:,chancol] == chan)[0]
     else:
         idx = np.ones((all_data.shape[0]),dtype=bool)
-    print all_data.shape
-    print idx.shape
     coords = np.zeros((idx.shape[0]))
     coords[:] = all_data[idx,col]
-    print coords.shape
     return coords
         
 def get_all_xycoords(all_data,xcol,ycol,sizeC,chancol,pix_size):

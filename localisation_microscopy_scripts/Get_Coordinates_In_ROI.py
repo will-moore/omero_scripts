@@ -15,8 +15,9 @@ from omero.rtypes import *
 
 FILE_TYPES = {'localizer':{'numColumns': 12, 'name': 'localizer', 'frame': 0, 'intensity': 1, 'z_col': None, 'psf_sigma': 2, 'headerlines': 5, 'x_col': 3, 'y_col': 4}, 
               'quickpalm':{'numColumns': 15, 'name': 'quickpalm', 'frame': 14, 'intensity': 1, 'z_col': 6, 'psf_sigma': None, 'headerlines': 1, 'x_col': 2, 'y_col': 3},
-              'zeiss2d':{'numColumns': 13, 'name': 'zeiss2d', 'frame': 1, 'intensity': 7, 'z_col': None, 'psf_sigma': 6, 'headerlines': 1, 'x_col': 4, 'y_col': 5},
-              'zeiss2d2chan':{'numColumns': 13, 'name': 'zeiss2d', 'frame': 1, 'intensity': 7, 'z_col': None, 'psf_sigma': 6, 'headerlines': 1, 'x_col': 4, 'y_col': 5,'chan_col':14}}
+              'zeiss2d':{'numColumns': 13, 'name': 'zeiss2d', 'frame': 1, 'intensity': 7, 'z_col': None, 'psf_sigma': 6, 'headerlines': 1, 'x_col': 5, 'y_col': 6},
+              'zeiss3d':{'numColumns': 13, 'name': 'zeiss3d', 'frame': 1, 'intensity': 7, 'z_col': None, 'psf_sigma': 6, 'headerlines': 1, 'x_col': 5, 'y_col': 6},
+              'zeiss2d2chan':{'numColumns': 13, 'name': 'zeiss2d2chan', 'frame': 1, 'intensity': 7, 'z_col': None, 'psf_sigma': 6, 'headerlines': 1, 'x_col': 5, 'y_col': 6,'chan_col':14}}
 PATH = os.path.join("/home/omero/OMERO.data/", "download")
 
 def get_rectangles(conn, imageId, pix_size):
@@ -189,7 +190,11 @@ def run_processing(conn,script_params):
     
     #other parameters
     sr_pix_size = script_params['SR_pixel_size']
-    cam_pix_size = script_params['Parent_Image_Pixel_Size']
+    if script_params['Convert_coordinates_to_nm']:
+        cam_pix_size = script_params['Parent_Image_Pixel_Size']
+    else:
+        cam_pix_size = 1
+        
     file_type = script_params['File_Type']
      
     path_to_ann = ann.getFile().getPath() + '/' + ann.getFile().getName()
@@ -217,7 +222,8 @@ def run_as_script():
     
     fileTypes = [k for k in FILE_TYPES.iterkeys()]
 
-    client = scripts.client('Ripley_Lfunction.py', """This script searches an attached SR dataset for coords defined by an ROI""",
+    client = scripts.client('Get_Coordinates_in_ROI.py', """This script searches an attached SR dataset for coords defined by an ROI. 
+Note you do not need to convert Zeiss data to nm""",
 
     scripts.String("Data_Type", optional=False, grouping="01",
         description="Choose source of images (only Image supported)", values=dataTypes, default="Image"),
@@ -234,8 +240,11 @@ def run_as_script():
     scripts.Int("SR_pixel_size", optional=False, grouping="05",
         description="Pixel size in super resolved image in nm"),
 
-    scripts.Int("Parent_Image_Pixel_Size", optional=False, grouping="06",
-        description="EMCCD pixel size in nm"),
+    scripts.Bool("Convert_coordinates_to_nm", optional=False, grouping="06.1",
+        description="Convert localisation coordinates to nm - DO NOT USE WITH ZEISS DATA", default=True),
+                            
+    scripts.Int("Parent_Image_Pixel_Size", grouping="06.2",
+        description="Convert the localisation coordinates to nm (multiply by parent image pixel size)"),
         
     version = "5.0.2",
     authors = ["Daniel Matthews", "QBI"],
