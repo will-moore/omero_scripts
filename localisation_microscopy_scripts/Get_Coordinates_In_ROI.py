@@ -16,8 +16,8 @@ from omero.rtypes import *
 FILE_TYPES = {'localizer':{'numColumns': 12, 'name': 'localizer', 'frame': 0, 'intensity': 1, 'z_col': None, 'psf_sigma': 2, 'headerlines': 5, 'x_col': 3, 'y_col': 4}, 
               'quickpalm':{'numColumns': 15, 'name': 'quickpalm', 'frame': 14, 'intensity': 1, 'z_col': 6, 'psf_sigma': None, 'headerlines': 1, 'x_col': 2, 'y_col': 3},
               'zeiss2d':{'numColumns': 13, 'name': 'zeiss2d', 'frame': 1, 'intensity': 7, 'z_col': None, 'psf_sigma': 6, 'headerlines': 1, 'x_col': 5, 'y_col': 6},
-              'zeiss3d':{'numColumns': 13, 'name': 'zeiss3d', 'frame': 1, 'intensity': 7, 'z_col': None, 'psf_sigma': 6, 'headerlines': 1, 'x_col': 5, 'y_col': 6},
-              'zeiss2d2chan':{'numColumns': 13, 'name': 'zeiss2d2chan', 'frame': 1, 'intensity': 7, 'z_col': None, 'psf_sigma': 6, 'headerlines': 1, 'x_col': 5, 'y_col': 6,'chan_col':14}}
+              'zeiss3d':{'numColumns': 13, 'name': 'zeiss3d', 'frame': 1, 'intensity': 7, 'z_col': 7, 'psf_sigma': 6, 'headerlines': 1, 'x_col': 5, 'y_col': 6},
+              'zeiss2d2chan':{'numColumns': 14, 'name': 'zeiss2d2chan', 'frame': 1, 'intensity': 7, 'z_col': None, 'psf_sigma': 6, 'headerlines': 1, 'x_col': 5, 'y_col': 6,'chan_col':14}}
 PATH = os.path.join("/home/omero/OMERO.data/", "download")
 
 def get_rectangles(conn, imageId, pix_size):
@@ -75,7 +75,6 @@ def get_all_xycoords(all_data,xcol,ycol,sizeC,chancol,pix_size):
         Returns the xy coordinates from the input data in a numpy array
     """   
     coords = np.zeros((sizeC,all_data.shape[0],2))
-    print coords.shape
     for c in range(sizeC):
         print get_all_locs_in_chan(all_data,xcol,c,chancol).shape
         coords[c,:,0] = get_all_locs_in_chan(all_data,xcol,c,chancol)*pix_size #convert to nm --> camera pixel size
@@ -92,17 +91,21 @@ def parse_sr_data(path,file_type,pix_size=95):
     num_columns = working_file_type['numColumns']
     xcol = working_file_type['x_col']
     ycol = working_file_type['y_col']
+    if 'zeiss2d' in file_type:
+        footerlines = 8
+    else:
+        footerlines = 0
     if 'zeiss2d2chan' in file_type:
         sizeC = 2
         chancol = FILE_TYPES[file_type]['chan_col']
     else:
         sizeC = 1
-        chancol = None    
+        chancol = None   
     s = time.time()
     try:
-        data = np.genfromtxt(path,usecols=range(num_columns),skip_header=headerlines,dtype='float')
+        data = np.genfromtxt(path,usecols=range(num_columns),skip_header=headerlines,skip_footer=footerlines,dtype='float')
     except ValueError:
-        data = np.genfromtxt(path,delimiter=',',usecols=range(num_columns),skip_header=headerlines,dtype='float')
+        data = np.genfromtxt(path,delimiter=',',usecols=range(num_columns),skip_header=headerlines,skip_footer=footerlines,dtype='float')
     except:
         print 'there was a problem parsing localisation data'
         raise

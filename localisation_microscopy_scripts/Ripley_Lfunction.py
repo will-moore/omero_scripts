@@ -17,7 +17,7 @@ from distance_functions import ripleykfunction
 FILE_TYPES = {'localizer':{'numColumns': 12, 'name': 'localizer', 'frame': 0, 'intensity': 1, 'z_col': None, 'psf_sigma': 2, 'headerlines': 5, 'x_col': 3, 'y_col': 4}, 
               'quickpalm':{'numColumns': 15, 'name': 'quickpalm', 'frame': 14, 'intensity': 1, 'z_col': 6, 'psf_sigma': None, 'headerlines': 1, 'x_col': 2, 'y_col': 3},
               'zeiss2d':{'numColumns': 13, 'name': 'zeiss2d', 'frame': 1, 'intensity': 7, 'z_col': None, 'psf_sigma': 6, 'headerlines': 1, 'x_col': 4, 'y_col': 5},
-              'zeiss2d2chan':{'numColumns': 13, 'name': 'zeiss2d', 'frame': 1, 'intensity': 7, 'z_col': None, 'psf_sigma': 6, 'headerlines': 1, 'x_col': 4, 'y_col': 5,'chan_col':14}}
+              'zeiss2d2chan':{'numColumns': 14, 'name': 'zeiss2d', 'frame': 1, 'intensity': 7, 'z_col': None, 'psf_sigma': 6, 'headerlines': 1, 'x_col': 4, 'y_col': 5,'chan_col':14}}
 PATH = os.path.join("/home/omero/OMERO.data/", "download")
 
 def get_rectangles(conn, imageId, pix_size):
@@ -91,6 +91,10 @@ def parse_sr_data(path,file_type,pix_size=95):
     num_columns = working_file_type['numColumns']
     xcol = working_file_type['x_col']
     ycol = working_file_type['y_col']
+    if 'zeiss2d' in file_type:
+        footerlines = 8
+    else:
+        footerlines = 0
     if 'zeiss2d2chan' in file_type:
         sizeC = 2
         chancol = FILE_TYPES[file_type]['chan_col']
@@ -99,9 +103,9 @@ def parse_sr_data(path,file_type,pix_size=95):
         chancol = None    
     s = time.time()
     try:
-        data = np.genfromtxt(path,usecols=range(num_columns),skip_header=headerlines,dtype='float')
+        data = np.genfromtxt(path,usecols=range(num_columns),skip_header=headerlines,skip_footer=footerlines,dtype='float')
     except ValueError:
-        data = np.genfromtxt(path,delimiter=',',usecols=range(num_columns),skip_header=headerlines,dtype='float')
+        data = np.genfromtxt(path,delimiter=',',usecols=range(num_columns),skip_header=headerlines,skip_footer=footerlines,dtype='float')
     except:
         print 'there was a problem parsing localisation data'
         raise
@@ -196,7 +200,10 @@ def run_processing(conn,script_params):
     
     #other parameters
     sr_pix_size = script_params['SR_pixel_size']
-    cam_pix_size = script_params['Parent_Image_Pixel_Size']
+    if script_params['Convert_coordinates_to_nm']:
+        cam_pix_size = script_params['Parent_Image_Pixel_Size']
+    else:
+        cam_pix_size = 1
     file_type = script_params['File_Type']
     rmax = script_params['Max_radius']
      
@@ -266,8 +273,11 @@ def run_as_script():
     scripts.Int("SR_pixel_size", optional=False, grouping="05",
         description="Pixel size in super resolved image in nm"),
 
-    scripts.Int("Parent_Image_Pixel_Size", optional=False, grouping="06",
-        description="EMCCD pixel size in nm"),
+    scripts.Bool("Convert_coordinates_to_nm", optional=False, grouping="06.1",
+        description="Convert localisation coordinates to nm - DO NOT USE WITH ZEISS DATA", default=True),
+                            
+    scripts.Int("Parent_Image_Pixel_Size", grouping="06.2",
+        description="Convert the localisation coordinates to nm (multiply by parent image pixel size)"),
         
     scripts.Int("Max_radius", optional=False, grouping="07",
         description="Maximum distance scale for calculation in nm", default=100),

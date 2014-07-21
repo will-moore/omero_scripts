@@ -14,7 +14,9 @@ import omero.scripts as scripts
 from omero.gateway import BlitzGateway
 from omero.gateway import ImageWrapper
 from omero.rtypes import rstring, rlong, robject, rint
+from omero.model import *
 import omero.util.script_utils as script_utils
+from omero.util.tiles import *
 import logging
 logger = logging.getLogger(__name__)
 import os
@@ -23,158 +25,6 @@ import time
 startTime = 0
 
 ADMIN_EMAIL = 'admin@omerocloud.qbi.uq.edu.au'
-
-def createImageFromNumpyTileSeq (conn, zctPlanes, planeCoords, sizeTiles, imageName, sizeX, sizeY, sizeZ=1, sizeC=1, sizeT=1, description=None, dataset=None, sourceImageId=None, channelList=None):
-    """
-    This version of createImageFromNumpySeq is a temporary workaround for ticket 12459 - 
-    original version does not allow creating of new images tile-by-tile
-    D.matthews QBI
-    
-    Creates a new multi-dimensional image from the sequence of 2D np arrays in zctPlanes.
-    zctPlanes should be a generator of np 2D arrays of shape (sizeY, sizeX) ordered
-    to iterate through T first, then C then Z.
-    Example usage:
-    original = conn.getObject("Image", 1)
-    sizeZ = original.getSizeZ()
-    sizeC = original.getSizeC()
-    sizeT = original.getSizeT()
-    clist = range(sizeC)
-    zctList = []
-    for z in range(sizeZ):
-    for c in clist:
-    for t in range(sizeT):
-    zctList.append( (z,c,t) )
-    def planeGen():
-    planes = original.getPrimaryPixels().getPlanes(zctList)
-    for p in planes:
-    # perform some manipulation on each plane
-    yield p
-    createImageFromNumpySeq (planeGen(), imageName, sizeZ=sizeZ, sizeC=sizeC, sizeT=sizeT, sourceImageId=1, channelList=clist)
-    
-    @param session An OMERO service factory or equivalent with getQueryService() etc.
-    @param zctPlanes A generator of np 2D arrays, corresponding to Z-planes of new image.
-    @param imageName Name of new image
-    @param description Description for the new image
-    @param dataset If specified, put the image in this dataset. omero.model.Dataset object
-    @param sourceImageId If specified, copy this image with metadata, then add pixel data
-    @param channelList Copies metadata from these channels in source image (if specified). E.g. [0,2]
-    @return The new OMERO image: omero.model.ImageI
-    """
-    queryService = conn.getQueryService()
-    pixelsService = conn.getPixelsService()
-    rawPixelsStore = conn.c.sf.createRawPixelsStore() # Make sure we don't get an existing rpStore
-    containerService = conn.getContainerService()
-    updateService = conn.getUpdateService()
-    
-    #import np
-    
-    def createImage(firstPlane, channelList):
-        """ Create our new Image once we have the first plane in hand """
-        convertToType = None
-        sizeY, sizeX = firstPlane.shape
-        print 'sizeY,sizeX',firstPlane.shape
-        if sourceImageId is not None:
-            if channelList is None:
-                channelList = range(sizeC)
-            iId = pixelsService.copyAndResizeImage(sourceImageId, rint(sizeX), rint(sizeY), rint(sizeZ), rint(sizeT), channelList, None, False, conn.SERVICE_OPTS)
-            # need to ensure that the plane dtype matches the pixels type of our new image
-            img = conn.getObject("Image", iId.getValue())
-            newPtype = img.getPrimaryPixels().getPixelsType().getValue()
-            omeroToNumpy = {'int8':'int8', 'uint8':'uint8', 'int16':'int16', 'uint16':'uint16', 'int32':'int32', 'uint32':'uint32', 'float':'float32', 'double':'double'}
-            if omeroToNumpy[newPtype] != firstPlane.dtype.name:
-                convertToType = getattr(np, omeroToNumpy[newPtype])
-            img._obj.setName(rstring(imageName))
-            updateService.saveObject(img._obj, conn.SERVICE_OPTS)
-        else:
-            # need to map np pixel types to omero - don't handle: bool_, character, int_, int64, object_
-            pTypes = {'int8':'int8', 'int16':'int16', 'uint16':'uint16', 'int32':'int32', 'float_':'float', 'float8':'float',
-                        'float16':'float', 'float32':'float', 'float64':'double', 'complex_':'complex', 'complex64':'complex'}
-            dType = firstPlane.dtype.name
-            if dType not in pTypes: # try to look up any not named above
-                pType = dType
-            else:
-                pType = pTypes[dType]
-            pixelsType = queryService.findByQuery("from PixelsType as p where p.value='%s'" % pType, None) # omero::model::PixelsType
-            if pixelsType is None:
-                raise Exception("Cannot create an image in omero from np array with dtype: %s" % dType)
-            channelList = range(sizeC)
-            iId = pixelsService.createImage(sizeX, sizeY, sizeZ, sizeT, channelList, pixelsType, imageName, description, conn.SERVICE_OPTS)
-    
-        imageId = iId.getValue()
-        return containerService.getImages("Image", [imageId], None, conn.SERVICE_OPTS)[0], convertToType
-    
-    def uploadPlane(plane, z, c, t, x, y, w, h, convertToType):
-        # if we're given a np dtype, need to convert plane to that dtype
-        if convertToType is not None:
-            p = np.zeros(plane.shape, dtype=convertToType)
-            p += plane
-            plane = p
-        byteSwappedPlane = plane.byteswap()
-        convertedPlane = byteSwappedPlane.tostring();
-        #rawPixelsStore.setPlane(convertedPlane, z, c, t, conn.SERVICE_OPTS)
-        rawPixelsStore.setTile(convertedPlane, z, c, t, x, y, w, h, conn.SERVICE_OPTS)
-    
-
-    dtype = None
-    channelsMinMax = []
-    exc = None
-    try:
-        for theTile in range(sizeTiles):
-            print 'theTile=',theTile
-            image = None
-            x,y,w,h = planeCoords.next()
-            print 'in createnumpytileseq, x,y,w,h',x,y,w,h
-            for theZ in range(sizeZ):
-                print 'theZ=',theZ
-                for theC in range(sizeC):
-                    print 'theC=',theC
-                    for theT in range(sizeT):
-                        print 'theT=',theT
-                        plane = zctPlanes.next()
-                        print 'in createnumpytileseq, plane shape',plane.shape
-                        if image == None: # use the first plane to create image.
-                            print 'creating new image'
-                            image, dtype = createImage(plane, channelList)
-                            pixelsId = image.getPrimaryPixels().getId().getValue()
-                            rawPixelsStore.setPixelsId(pixelsId, True, conn.SERVICE_OPTS)
-                        uploadPlane(plane, theZ, theC, theT, x, y, w, h, dtype)
-                        # init or update min and max for this channel
-                        minValue = plane.min()
-                        maxValue = plane.max()
-                        if len(channelsMinMax) < (theC +1): # first plane of each channel
-                            channelsMinMax.append( [minValue, maxValue] )
-                        else:
-                            channelsMinMax[theC][0] = min(channelsMinMax[theC][0], minValue)
-                            channelsMinMax[theC][1] = max(channelsMinMax[theC][1], maxValue)
-    except Exception, e:
-        logger.error("Failed to setPlane() on rawPixelsStore while creating Image", exc_info=True)
-        exc = e
-    try:
-        rawPixelsStore.close(conn.SERVICE_OPTS)
-    except Exception, e:
-        logger.error("Failed to close rawPixelsStore", exc_info=True)
-        if exc is None:
-            exc = e
-    if exc is not None:
-        raise exc
-    
-    try: # simply completing the generator - to avoid a GeneratorExit error.
-        zctPlanes.next()
-    except StopIteration:
-        pass
-    
-    for theC, mm in enumerate(channelsMinMax):
-        pixelsService.setChannelGlobalMinMax(pixelsId, theC, float(mm[0]), float(mm[1]), conn.SERVICE_OPTS)
-        #resetRenderingSettings(renderingEngine, pixelsId, theC, mm[0], mm[1])
-    
-    # put the image in dataset, if specified.
-    if dataset:
-        link = omero.model.DatasetImageLinkI()
-        link.parent = omero.model.DatasetI(dataset.getId(), False)
-        link.child = omero.model.ImageI(image.id.val, False)
-        updateService.saveObject(link, conn.SERVICE_OPTS)
-    
-    return ImageWrapper(conn,image)
     
 def printDuration(output=True):
     global startTime
@@ -182,12 +32,68 @@ def printDuration(output=True):
         startTime = time.time()
     if output:
         print "Script timer = %s secs" % (time.time() - startTime)
+               
+def create_image_from_tiles(conn,source,image_name,description,box):
+    
+    pixelsService = conn.getPixelsService()
+    queryService = conn.getQueryService()
+    xbox, ybox, wbox, hbox, z1box, z2box, t1box, t2box = box
+    sizeX = wbox
+    sizeY = hbox
+    sizeZ = source.getSizeZ()
+    sizeT = source.getSizeT()
+    sizeC = source.getSizeC()
+    tileWidth = 512
+    tileHeight = 512
+    primary_pixels = source.getPrimaryPixels()
+   
+    def create_image():
+        query = "from PixelsType as p where p.value='uint8'"
+        pixelsType = queryService.findByQuery(query, None)
+        channelList = range(sizeC)
+        bytesPerPixel = pixelsType.bitSize.val / 8
+        iId = pixelsService.createImage(
+           sizeX,
+           sizeY,
+           sizeZ,
+           sizeT,
+           channelList,
+           pixelsType,
+           image_name,
+           description,
+           conn.SERVICE_OPTS)
+        
+        image = conn.getObject("Image", iId)
+        return image
+    
+    def mktile(z, c, t, x, y, width, height):
+        blk_x = x + box[0]
+        blk_y = y + box[1]
+        blk_w = width
+        blk_h = height       
+        tile = (blk_x, blk_y, blk_w, blk_h)
+        return list(primary_pixels.getTile(z, c, t, tile).flatten())
+    
+    class Iteration(TileLoopIteration):
 
+        def run(self, data, z, c, t, x, y, tileWidth, tileHeight, tileCount):
+            tile2d = mktile(z, c, t, x, y,tileWidth, tileHeight)
+            data.setTile(tile2d, z, c, t, x, y, tileWidth, tileHeight) 
+       
+    new_image = create_image()
+    pid = new_image.getPixelsId()
+    loop = RPSTileLoop(conn.c.sf, PixelsI(pid, False))
+    loop.forEachTile(tileWidth, tileHeight, Iteration())
 
+    for theC in range(sizeC):
+        pixelsService.setChannelGlobalMinMax(pid, theC, float(0), float(255), conn.SERVICE_OPTS)
+        
+    return new_image
+    
 def getRectangles(conn, imageId):
     """
     Returns a list of (x, y, width, height, zStart, zStop, tStart, tStop)
-    of each rectange ROI in the image
+    of each rectangle ROI in the image
     """
 
     rois = []
@@ -224,126 +130,6 @@ def getRectangles(conn, imageId):
             rois.append((x, y, width, height, zStart, zEnd, tStart, tEnd))
 
     return rois
-
-def get_block_coords(row,col,block_size,box):
-
-    # compute starting row/col in source image of block of data
-    source_min_row = block_size[0] * row + box[1]
-    source_min_col = block_size[1] * col + box[0]
-    source_max_row = source_min_row + block_size[0]
-    source_max_col = source_min_col + block_size[1]
-    source_max_row = min(source_max_row,box[1] + box[3])
-    source_max_col = min(source_max_col,box[0] + box[2])
-    
-    # setup indices for target block
-    total_rows = source_max_row - source_min_row
-    total_cols = source_max_col - source_min_col
-
-    if (source_min_row >= 0) and (source_max_row <= box[1] + box[3]) and (source_min_col >= 0) and (source_max_col <= box[0] + box[2]):        
-        pass
-    else:
-        # setup target indices variables
-        target_min_row = 0
-        target_max_row = total_rows
-        target_min_col = 0
-        target_max_col = total_cols
-        # check each edge of the requested block for edge
-        if source_min_row < 0:
-            delta = 1 - source_min_row
-            source_min_row = source_min_row + delta
-            target_min_row = target_min_row + delta
-        
-        if source_max_row > box[3]:
-            delta = source_max_row - box[3]
-            source_max_row = source_max_row - delta
-            target_max_row = target_max_row - delta
-        
-        if source_min_col < 0:
-            delta = 1 - source_min_col
-            source_min_col = source_min_col + delta
-            target_min_col = target_min_col + delta
-        
-        if source_max_col > box[2]:
-            delta = source_max_col - box[2]
-            source_max_col = source_max_col - delta
-            target_max_col = target_max_col - delta
-
-    x = source_min_col
-    y = source_min_row
-    w = source_max_col - source_min_col
-    h = source_max_row - source_min_row
-    return (x,y,w,h)
-
-def get_block(source,box,block):
-    xbox, ybox, wbox, hbox, z1box, z2box, t1box, t2box = box
-    x,y,w,h = block
-    pixels = source.getPrimaryPixels()
-    sizeZ = z2box-z1box + 1
-    sizeT = t2box-t1box + 1
-    sizeC = source.getSizeC()
-    zctTileList = []
-    tile = (x, y, w, h)
-    for z in range(z1box, z2box+1):
-        for c in range(sizeC):
-            for t in range(t1box, t2box+1):
-                zctTileList.append((z, c, t, tile))
-
-    return pixels.getTiles(zctTileList)
-
-def put_blocks(conn,source,imageId,source_coords,box):
-    sizeZ = source.getSizeZ()
-    sizeT = source.getSizeT()
-    sizeC = source.getSizeC()
-    
-    def blk_coord_gen():
-        for i in range(len(source_coords)):
-            x = source_coords[i][0] - box[0]
-            y = source_coords[i][1] - box[1]
-            w = source_coords[i][2]
-            h = source_coords[i][3]
-            yield (x,y,w,h)
-            
-    def blk_gen():
-        for i in range(len(source_coords)):
-            x = source_coords[i][0] - box[0]
-            y = source_coords[i][1] - box[1]
-            w = source_coords[i][2]
-            h = source_coords[i][3]
-            tile = get_block(source,box,(x,y,w,h))
-            for i, t in enumerate(tile):
-                yield t
-     
-    imageName = source.getName()
-    print "sizeZ, sizeC, sizeT", sizeZ, sizeC, sizeT
-    description = "Created from image:\n  Name: %s\n  Image ID: %d"\
-        " \n x: %d y: %d" % (imageName, imageId, box[0], box[1])
-    newImg = createImageFromNumpyTileSeq(conn,
-        blk_gen(), blk_coord_gen(), len(source_coords), imageName,
-        sizeX=box[2], sizeY=box[3], sizeZ=sizeZ, sizeC=sizeC, sizeT=sizeT,
-        description=description,sourceImageId = imageId)
-  
-    print "New Image Id = %s" % newImg.getId()
-        
-    return newImg
-        
-def tile_image_gen(conn,source,imageId,box):
-    block_size = (100,100)
-    
-    # total number of blocks we'll process (including partials)
-    mblocks = int(math.ceil(float(box[2]) / float(block_size[0])))
-    nblocks = int(math.ceil(float(box[3]) / float(block_size[1])))
-    num_blocks = mblocks * nblocks
-    print 'num_blocks = ',num_blocks
-    sizeZ = source.getSizeZ()
-    sizeT = source.getSizeT()
-    sizeC = source.getSizeC()
-    
-    blk_coords = []
-    for row in range(0,nblocks):
-        for col in range(0,mblocks):
-            x,y,w,h = get_block_coords(row,col,block_size,box)
-            blk_coords.append((x,y,w,h))
-    return put_blocks(conn,source,imageId,blk_coords,box)
     
 def process_image(conn, imageId, parameterMap):
     """
@@ -374,7 +160,8 @@ def process_image(conn, imageId, parameterMap):
 
     imgW = image.getSizeX()
     imgH = image.getSizeY()
-
+    name,ext = os.path.splitext(image.getName())
+    
     for index, r in enumerate(rois):
         x, y, w, h, z1, z2, t1, t2 = r
         # Bounding box
@@ -400,26 +187,41 @@ def process_image(conn, imageId, parameterMap):
 #make a new 5D image per ROI
     images = []
     iIds = []
-    for r in rois:
+    for i,r in enumerate(rois):
         
         x, y, w, h, z1, z2, t1, t2 = r
         print "  ROI x: %s y: %s w: %s h: %s z1: %s z2: %s t1: %s t2: %s"\
             % (x, y, w, h, z1, z2, t1, t2)
+            
+        new_image_name = name + '_0' + str(index) + ext
+        description = "Image from ROIS on parent Image:\n  Name: %s\n"\
+            "  Image ID: %d" % (imageName, imageId)
+        print description
 
-        # need a tile generator to get all the planes within the ROI
-        sizeZ = z2-z1 + 1
-        sizeT = t2-t1 + 1
-        sizeC = image.getSizeC()
-        zctTileList = []
-        tile = (x, y, w, h)
-        print "zctTileList..."
-        for z in range(z1, z2+1):
-            for c in range(sizeC):
-                for t in range(t1, t2+1):
-                    zctTileList.append((z, c, t, tile))
+        if (w <= 4096) or (h <= 4096):
+            # need a tile generator to get all the planes within the ROI
+            sizeZ = z2-z1 + 1
+            sizeT = t2-t1 + 1
+            sizeC = image.getSizeC()
+            zctTileList = []
+            tile = (x, y, w, h)
+            print "zctTileList..."
+            for z in range(z1, z2+1):
+                for c in range(sizeC):
+                    for t in range(t1, t2+1):
+                        zctTileList.append((z, c, t, tile))
+                        
+            def tileGen():
+                for i, t in enumerate(pixels.getTiles(zctTileList)):
+                    yield t
+                           
+            newImg = conn.createImageFromNumpySeq(
+                tileGen(), imageName,
+                sizeZ=sizeZ, sizeC=sizeC, sizeT=sizeT,
+                description=description)
+        else:
+            newImg = create_image_from_tiles(conn,image,new_image_name,description,r)
         
-        newImg = tile_image_gen(conn,image,imageId,r)
-
         images.append(newImg)
         iIds.append(newImg.getId())
 
@@ -643,7 +445,7 @@ def runAsScript():
 
     client = scripts.client(
         'Images_From_ROIs.py',
-        """Crop rectangular regions from slide scanner images. MAXIMUM BATCH SIZE IS 10 ROIs!""",
+        """Crop rectangular regions from slide scanner images. WARNING: THIS PROCESS CAN TAKE A LONG TIME - APPROX MAXIMUM BATCH SIZE IS 10 ROIs!""",
 
         scripts.String(
             "Data_Type", optional=False, grouping="1",
