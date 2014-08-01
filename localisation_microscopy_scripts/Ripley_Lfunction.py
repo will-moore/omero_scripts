@@ -256,7 +256,8 @@ def run_as_script():
     
     fileTypes = [k for k in FILE_TYPES.iterkeys()]
 
-    client = scripts.client('Ripley_Lfunction.py', """This script searches an attached SR dataset for coords defined by an ROI""",
+    client = scripts.client('Ripley_Lfunction.py', """This script calculates the ripley l statistic for ROIs in a reconstructed super resolution image. 
+NOTE THAT CONVERSION OF COORDINATES TO NM IS NOT REQUIRED FOR ZEISS DATASETS""",
 
     scripts.String("Data_Type", optional=False, grouping="01",
         description="Choose source of images (only Image supported)", values=dataTypes, default="Image"),

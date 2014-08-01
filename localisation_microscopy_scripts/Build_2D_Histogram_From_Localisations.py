@@ -16,8 +16,8 @@ from hist_data import calc_hist
 
 FILE_TYPES = {'localizer':{'numColumns': 12, 'name': 'localizer', 'frame': 0, 'intensity': 1, 'z_col': None, 'psf_sigma': 2, 'headerlines': 5, 'x_col': 3, 'y_col': 4}, 
               'quickpalm':{'numColumns': 15, 'name': 'quickpalm', 'frame': 14, 'intensity': 1, 'z_col': 6, 'psf_sigma': None, 'headerlines': 1, 'x_col': 2, 'y_col': 3},
-              'zeiss2d':{'numColumns': 13, 'name': 'zeiss2d', 'frame': 1, 'intensity': 7, 'z_col': None, 'psf_sigma': 6, 'headerlines': 1, 'x_col': 5, 'y_col': 6},
-              'zeiss2d2chan':{'numColumns': 14, 'name': 'zeiss2d2chan', 'frame': 1, 'intensity': 7, 'z_col': None, 'psf_sigma': 6, 'headerlines': 1, 'x_col': 5, 'y_col': 6,'chan_col':14}}
+              'zeiss2d':{'numColumns': 13, 'name': 'zeiss2d', 'frame': 1, 'intensity': 7, 'z_col': None, 'psf_sigma': 6, 'headerlines': 1, 'x_col': 4, 'y_col': 5},
+              'zeiss2d2chan':{'numColumns': 14, 'name': 'zeiss2d2chan', 'frame': 1, 'intensity': 7, 'z_col': None, 'psf_sigma': 6, 'headerlines': 1, 'x_col': 4, 'y_col': 5,'chan_col':14}}
 PATH = os.path.join("/home/omero/OMERO.data/", "download")
 
 def get_all_locs_in_chan(all_data,col,chan=0,chancol=None):
@@ -117,18 +117,18 @@ def process_data(conn,script_params,file_id,coords,sr_pix_size,nm_per_pixel):
     
     frame_width = image.getSizeX() 
     frame_height = image.getSizeY()
-    sizeT = image.getSizeZ()
-    sizeZ = image.getSizeT()
-    if 'zeiss' in script_params['File_Type']:
-        num_frames = sizeT
+    sizeT = 1
+    sizeZ = 1
+    if 'czi' in ext:
+        num_frames = image.getSizeT()
     else:
-        num_frames = sizeZ
-        
+        num_frames = image.getSizeZ()
     if 'zeiss2d2chan' in script_params['File_Type']:
         sizeC = 2
     else:
         sizeC = 1
-
+    binsx = (frame_width * nm_per_pixel) / sr_pix_size
+    binsy = (frame_height * nm_per_pixel) / sr_pix_size
     hist_data = np.zeros((sizeC,binsy,binsx))
     for c in range(sizeC):
         hist = calc_hist('2d',coords[c,:,:],num_frames,binsy,binsx)
