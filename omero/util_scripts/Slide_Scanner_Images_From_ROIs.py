@@ -25,6 +25,7 @@ import time
 startTime = 0
 
 ADMIN_EMAIL = 'admin@omerocloud.qbi.uq.edu.au'
+PATH = os.path.join("/home/omero/OMERO.data/", "download")
     
 def printDuration(output=True):
     global startTime
@@ -32,9 +33,9 @@ def printDuration(output=True):
         startTime = time.time()
     if output:
         print "Script timer = %s secs" % (time.time() - startTime)
-               
+                   
 def create_image_from_tiles(conn,source,image_name,description,box):
-    
+        
     pixelsService = conn.getPixelsService()
     queryService = conn.getQueryService()
     xbox, ybox, wbox, hbox, z1box, z2box, t1box, t2box = box
@@ -46,7 +47,7 @@ def create_image_from_tiles(conn,source,image_name,description,box):
     tileWidth = 512
     tileHeight = 512
     primary_pixels = source.getPrimaryPixels()
-   
+           
     def create_image():
         query = "from PixelsType as p where p.value='uint8'"
         pixelsType = queryService.findByQuery(query, None)
@@ -73,21 +74,21 @@ def create_image_from_tiles(conn,source,image_name,description,box):
         blk_h = height       
         tile = (blk_x, blk_y, blk_w, blk_h)
         return list(primary_pixels.getTile(z, c, t, tile).flatten())
-    
+        
     class Iteration(TileLoopIteration):
 
         def run(self, data, z, c, t, x, y, tileWidth, tileHeight, tileCount):
             tile2d = mktile(z, c, t, x, y,tileWidth, tileHeight)
-            data.setTile(tile2d, z, c, t, x, y, tileWidth, tileHeight) 
-       
+            data.setTile(tile2d, z, c, t, x, y, tileWidth, tileHeight)
+            
     new_image = create_image()
     pid = new_image.getPixelsId()
-    loop = RPSTileLoop(conn.c.sf, PixelsI(pid, False))
+    loop = RPSTileLoop(conn.c.sf, PixelsI(pid, False))  
     loop.forEachTile(tileWidth, tileHeight, Iteration())
 
     for theC in range(sizeC):
         pixelsService.setChannelGlobalMinMax(pid, theC, float(0), float(255), conn.SERVICE_OPTS)
-        
+
     return new_image
     
 def getRectangles(conn, imageId):
@@ -149,7 +150,6 @@ def process_image(conn, imageId, parameterMap):
 
     imageName = image.getName()
     updateService = conn.getUpdateService()
-
     pixels = image.getPrimaryPixels()
     # note pixel sizes (if available) to set for the new images
     physicalSizeX = pixels.getPhysicalSizeX()
@@ -193,7 +193,7 @@ def process_image(conn, imageId, parameterMap):
         print "  ROI x: %s y: %s w: %s h: %s z1: %s z2: %s t1: %s t2: %s"\
             % (x, y, w, h, z1, z2, t1, t2)
             
-        new_image_name = name + '_0' + str(index) + ext
+        new_image_name = name + '_0' + str(index)
         description = "Image from ROIS on parent Image:\n  Name: %s\n"\
             "  Image ID: %d" % (imageName, imageId)
         print description
@@ -219,9 +219,10 @@ def process_image(conn, imageId, parameterMap):
                 tileGen(), imageName,
                 sizeZ=sizeZ, sizeC=sizeC, sizeT=sizeT,
                 description=description)
-        else:
+        else: 
+            s = time.time()
             newImg = create_image_from_tiles(conn,image,new_image_name,description,r)
-        
+            print 'new image creation took:',time.time()-s,'seconds'
         images.append(newImg)
         iIds.append(newImg.getId())
 

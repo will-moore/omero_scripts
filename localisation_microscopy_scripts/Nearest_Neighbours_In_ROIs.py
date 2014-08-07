@@ -12,6 +12,7 @@ from numpy import array
 from omero.gateway import BlitzGateway
 import omero
 from omero.rtypes import *
+from tables import *
 from distance_functions import nearest_neighbour
 
 FILE_TYPES = {'localizer':{'numColumns': 12, 'name': 'localizer', 'frame': 0, 'intensity': 1, 'z_col': None, 'psf_sigma': 2, 'headerlines': 5, 'x_col': 3, 'y_col': 4}, 
@@ -20,6 +21,10 @@ FILE_TYPES = {'localizer':{'numColumns': 12, 'name': 'localizer', 'frame': 0, 'i
               'zeiss2d2chan':{'numColumns': 14, 'name': 'zeiss2d', 'frame': 1, 'intensity': 7, 'z_col': None, 'psf_sigma': 6, 'headerlines': 1, 'x_col': 4, 'y_col': 5,'chan_col':14}}
 PATH = os.path.join("/home/omero/OMERO.data/", "download")
 
+class NNHistogram(IsDescription):
+    bins = FloatCol()      # double (double-precision)
+    counts = FloatCol()      # double (double-precision)
+    
 def get_rectangles(conn, imageId, pix_size):
     """
         Returns a list of (x, y, width, height, zStart, zStop, tStart, tStop)
@@ -27,7 +32,7 @@ def get_rectangles(conn, imageId, pix_size):
     """
 
     rois = []
-
+    roiIds = []
     roiService = conn.getRoiService()
     result = roiService.findByImage(imageId, None)
 
@@ -39,6 +44,7 @@ def get_rectangles(conn, imageId, pix_size):
         x = None
         for shape in roi.copyShapes():
             if type(shape) == omero.model.RectI:
+                roiIds.append(roi.getId().getValue())
                 # check t range and z range for every rectangle
                 t = shape.getTheT().getValue()
                 z = shape.getTheZ().getValue()
@@ -59,7 +65,7 @@ def get_rectangles(conn, imageId, pix_size):
         if zStart is not None:
             rois.append((x*pix_size, y*pix_size, width*pix_size, height*pix_size, zStart, zEnd, tStart, tEnd))
 
-    return rois
+    return rois, roiIds
 
 def get_all_locs_in_chan(all_data,col,chan=0,chancol=None):
     if chancol:
@@ -152,17 +158,69 @@ def delete_downloaded_data(ann):
         os.remove(file_path)
     except OSError:
         pass
+    
+# def put_data_in_table(conn, imageIds, roiIds, neighbours, histogram, bins):
+#     columns = [
+#         omero.grid.LongColumn('imageId', '', []),
+#         omero.grid.RoiColumn('roidId', '', []),
+#         omero.grid.DoubleColumn('histogram bins', '', [])
+#         ]
+# #     
+# #     nn_columns = []
+# #     hist_columns = []
+# #     nn_headers = []
+# #     hist_headers = []
+# #     for r in range(len(roiIds)):
+# #         nn_str = 'near neighbours in roi %s' %r
+# #         hist_str = 'histogram data in roi %s' %r
+# #         nn_headers.append(nn_str)
+# #         hist_headers.append(hist_str)
+# #         nn_columns.append(omero.grid.DoubleColumn(nn_str, '', []))
+# #         hist_columns.append(omero.grid.DoubleColumn(hist_str, '', []))
+# #     print 'nn_headers:',nn_headers
+#     # create and initialize the table
+#     nn_columns = [omero.grid.DoubleArrayColumn('near neighbours', '', [])]
+#     table = conn.c.sf.sharedResources().newTable(1, "Near Neighbours%s" % str(random()))
+#     print table
+#     table.initialize(nn_columns)  
+#      
+#     # Prepare data for adding to OMERO table.
+# #     data = [
+# #         omero.grid.LongColumn('imageId', '', imageIds),
+# #         omero.grid.RoiColumn('roidId', '', roiIds),
+# #         omero.grid.DoubleColumn('histogram bins', '', bins)
+# #         ]
+# #     nn_data = []
+# #     hist_data = []
+# #     for r in range(len(roiIds)):
+# #         print 'nn_headers[r]:',nn_headers[r]
+# #         nn_data.append(omero.grid.DoubleColumn(nn_headers[r], '',neighbours[r]))
+# #         hist_data.append(omero.grid.DoubleColumn(hist_headers[r], '',histogram[r]))
+#     nn_data = [omero.grid.DoubleArrayColumn('near neighbours', '', neighbours)]
+#     table.addData(nn_data)
+#     table.close()
+    # get the table as an original file & attach this data to Dataset
+#     
+#     orig_file = table.getOriginalFile()
+#     fileAnn = omero.model.FileAnnotationI()
+#     fileAnn.setFile(orig_file)
+#     link = omero.model.ImageAnnotationLinkI()
+#     link.setParent(omero.model.ImageI(imageIds[0], False))
+#     link.setChild(fileAnn)
+#     conn.getUpdateService().saveAndReturnObject(link)
       
 def process_data(conn,image,rectangles,coords):
     """
         Calculates the neighbour distance in all the rectangular rois
     """    
+         
     dist_bins = np.arange(0,200,1)
     num_rois = len(rectangles)
     nn_hist = np.zeros((coords.shape[0],dist_bins.shape[0]-1,num_rois))
     nn_data = []
     for i,rect in enumerate(rectangles):
         locs_list = []
+        print 'rect:',rect
         for c in range(coords.shape[0]):
             locs = get_coords_in_roi(coords[c,:,:],rect)
             locs_list.append(locs)
@@ -173,13 +231,15 @@ def process_data(conn,image,rectangles,coords):
             hist,edges = np.histogram(nn[:,c],bins=dist_bins)
             nn_hist[c,:,i] = hist
         nn_data.append(nn)
-    return nn_data,nn_hist
+        
+    return nn_data,nn_hist,dist_bins
                             
 def run_processing(conn,script_params):
     file_anns = []
     message = ""
-    
+    imageIds = []
     image_id = script_params['ImageID']
+    imageIds.append(image_id)
     image = conn.getObject("Image",image_id)
     if not image:
         message = 'Could not find specified image'
@@ -202,11 +262,22 @@ def run_processing(conn,script_params):
     path_to_ann = ann.getFile().getPath() + '/' + ann.getFile().getName()
     name,ext = os.path.splitext(path_to_ann)
     if ('txt' in ext) or ('csv' in ext):
+        #get the path to the downloaded data
         path_to_data = download_data(ann)
-        coords = parse_sr_data(path_to_data,file_type,cam_pix_size)
-        rectangles = get_rectangles(conn,image_id,sr_pix_size)
-        nn_data,nn_hist = process_data(conn,image,rectangles,coords)
         
+        #get all the xy coords in that data
+        coords = parse_sr_data(path_to_data,file_type,cam_pix_size)
+        
+        #get the rois to be processed
+        rectangles,rectIds = get_rectangles(conn,image_id,sr_pix_size)
+        
+        #calculate near neighbour distances
+        nn_data,nn_hist,bins = process_data(conn,image,rectangles,coords)
+        
+        #put the data in an omero table
+#         put_data_in_table(conn,imageIds,rectIds,nn_data,nn_hist,bins)
+        
+        #write the data to a csv
         file_name = "near_neighbours_" + ann.getFile().getName()[:-4] + '.csv'
         print file_name
         try:

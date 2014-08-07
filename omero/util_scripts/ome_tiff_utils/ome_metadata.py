@@ -1,12 +1,8 @@
 #from __future__ import print_function
 import math as m
 import numpy as np
-from ome import ome, OMEBase
-import os
-from slide_metadata import SlideImage
-import wx
-from matplotlib import pyplot
-import PIL
+from ome_tiff_utils.ome_generator import ome_elem, OMEBase
+from ome_tiff_utils.slide_metadata import SlideImage
 
 groups = dict(
               QBIgroup=dict(name = 'QBIgroup', contact_id = 'QBIuser'))
@@ -25,23 +21,19 @@ class FileSizeError(Exception):
 class OMETIFF(OMEBase):
 
     prefix = 'ome'
-    def __init__(self, userDetails, inpath, outpath, section_id, total_sections, input_data, pixelregion, outChan, scalefact, rotation):
+    def __init__(self, userDetails, slide_name, outpath, section_id, total_sections, input_data, pixelregion, scalefact):
         OMEBase.__init__(self)
         self.outputtif_path = outpath
         self.ID = section_id
         self.Total = total_sections
-        self.InputPath = inpath
-        self.InputFilename = self.InputPath.split("\\")[-1]
-        self.imarray = input_data
-        self.outChan = outChan
-        self.rotation = rotation
+        self.InputFilename = slide_name
+        self.slide = input_data
         self.roi = pixelregion
-        self.meta = SlideImage(self.InputPath)
-        self.mode = self.meta.micro_mode()
+        self.mode = input_data.micro_mode()
         self.scalefact = scalefact
         self.tile_width = 1024
         self.tile_height = 1024
-        if not userDetails:
+        if userDetails is None:
             current_user = 'QBIuser'
             current_group = 'QBIgroup'
         else:
@@ -60,7 +52,7 @@ class OMETIFF(OMEBase):
     
     def iter_Image(self, func):
 #        get the meta data dictionaries
-        meta = self.meta
+        meta = self.slide
          
         if self.mode == 'MetaCyte TL':
             self.instrument = 'Bright-field'
@@ -79,15 +71,10 @@ class OMETIFF(OMEBase):
             DatasetID = str(self.InputFilename).replace(' ','_')
         else:
             DatasetID = str(self.InputFilename)
-        if self.rotation == 0:
-            self.sizeX = self.roi[3] - self.roi[2]
-            self.sizeY = self.roi[1] - self.roi[0]
-        else:
-            self.sizeX = self.roi[1] - self.roi[0]
-            self.sizeY = self.roi[3] - self.roi[2]           
+        self.sizeX = self.roi[2]
+        self.sizeY = self.roi[3]          
         self.sizeZ = int(ImageData['Z'])
-        writeChans = self.outChan
-        self.sizeC = len(writeChans)
+        self.sizeC = meta.numChannels
         self.sizeT = meta.time_points()
 
         if self.sizeT == 1:
@@ -124,46 +111,27 @@ class OMETIFF(OMEBase):
         self.tif_filename = self.outputtif_path      
 #        self.tif_images[self.instrument,self.tif_filename,self.tif_uuid,self.PhysSize] = tif_data        
 
-        pixels = ome.Pixels(
+        pixels = ome_elem.Pixels(
                     DimensionOrder=order, ID='Pixels:%s' % (self.instrument),
                     SizeX = str(self.sizeX), SizeY = str(self.sizeY), SizeZ = str(self.sizeZ), SizeT=str(self.sizeT), SizeC = str(self.sizeC),
                     Type = self.dtype2PixelIType (dtype), **pixels_d
                     )
-        if (len(writeChans) > 1):
-            for chan in writeChans:           
-                chan_dict = channelData[chan]
-                channel_d['Name'] = chan_dict['Name']
-                chan_color = chan_dict['Color']
-                channel = ome.Channel(ID='Channel:0:%s' %(chan), **channel_d)
-                lpath = ome.LightPath(*lpath_l)
-                channel.append(lpath)
-                pixels.append(channel)
-
-            plane_l = []    
-            for idx_chan in range(len(writeChans)):    
-                d = dict(IFD=str(idx_chan),FirstC=str(idx_chan), FirstZ='0',FirstT='0', PlaneCount='1')
-                plane_l.append(d)
         
-                tiffdata = ome.TiffData(ome.UUID (self.tif_uuid, FileName=self.tif_filename.split("\\")[-1]), **d)
-                pixels.append(tiffdata)    
-
-            
-        elif len(writeChans) == 1:                           
-            chan_dict = channelData[writeChans[0]]
-            channel_d['Name'] = chan_dict['Name']
+        for chan in range(self.sizeC):           
+            chan_dict = channelData[chan]
             channel_d['Name'] = chan_dict['Name']
             chan_color = chan_dict['Color']
-            print(chan_color)
-            channel = ome.Channel(ID='Channel:0:%s' %(0), **channel_d)
-            lpath = ome.LightPath(*lpath_l)
+            channel = ome_elem.Channel(ID='Channel:0:%s' %(chan), **channel_d)
+            lpath = ome_elem.LightPath(*lpath_l)
             channel.append(lpath)
             pixels.append(channel)
-           
-            plane_l = []        
-            d = dict(IFD='0',FirstC='0', FirstZ='0',FirstT='0', PlaneCount='1')
+
+        plane_l = []    
+        for idx_chan in range(self.sizeC):    
+            d = dict(IFD=str(idx_chan),FirstC=str(idx_chan), FirstZ='0',FirstT='0', PlaneCount='1')
             plane_l.append(d)
-            
-            tiffdata = ome.TiffData(ome.UUID (self.tif_uuid, FileName=self.tif_filename.split("\\")[-1]), **d)
+    
+            tiffdata = ome_elem.TiffData(ome_elem.UUID (self.tif_uuid, FileName=self.tif_filename.split("\\")[-1]), **d)
             pixels.append(tiffdata)
                              
         date = ImageData['RecordingDate']
@@ -171,11 +139,11 @@ class OMETIFF(OMEBase):
         description = 'This is section number ' + str(self.ID) + ' of ' + str(self.Total) + \
                         ' on ' + self.InputFilename + ' acquired using classifier: ' + classifier
             
-        image = ome.Image (ome.AcquiredDate (date), 
-                           #ome.ExperimenterRef(ID='Experimenter:%s' % (self.current_user)),
-                           ome.Description('Description:%s' %(description)),
+        image = ome_elem.Image (ome_elem.AcquiredDate (date), 
+                           #ome_elem.ExperimenterRef(ID='Experimenter:%s' % (self.current_user)),
+                           ome_elem.Description('Description:%s' %(description)),
                            #ome.GroupRef(ID='Group:%s' %(self.current_group)),
-                           ome.DatasetRef(ID='Dataset:%s' % (DatasetID)),
+                           ome_elem.DatasetRef(ID='Dataset:%s' % (DatasetID)),
                            pixels, ID='Image:%s' % (self.instrument))
         yield image
         return            
@@ -202,7 +170,7 @@ class OMETIFF(OMEBase):
         e = func (ID='Experimenter:%s' % (expid), **d1)
         g = d['groups']
         
-        e.append (ome.GroupRef(ID='Group:%s' % g))
+        e.append (ome_elem.GroupRef(ID='Group:%s' % g))
         yield e 
         
     def iter_Group(self, func):
@@ -210,9 +178,9 @@ class OMETIFF(OMEBase):
         d = groups[groupid]
         e = func(ID='Group:%s' % groupid, Name=d['name'])
         if 'descr' in d:
-            e.append(ome.Description (d['descr']))
+            e.append(ome_elem.Description (d['descr']))
         if 'contact_id' in d:
-            e.append (ome.Contact(ID='Experimenter:%s' % (d['contact_id'])))
+            e.append (ome_elem.Contact(ID='Experimenter:%s' % (d['contact_id'])))
         yield e
             
     def iter_Instrument(self,func):
@@ -225,9 +193,9 @@ class OMETIFF(OMEBase):
         elif self.mode == 'MetaCyte FL':
             self.instrument = 'Fluorescence Slide Scanner'
             scope = 'MetaCyteFL'
-        ImarisInfo = self.meta.datasetinfo_imaris()
+        ImarisInfo = self.slide.datasetinfo_imaris()
         e = func(ID='Instrument:0')
-        e.append(ome.Microscope(Manufacturer='%s' %ImarisInfo['ManufactorString'],
+        e.append(ome_elem.Microscope(Manufacturer='%s' %ImarisInfo['ManufactorString'],
                                 Model=self.instrument,Type='Upright'))    
         return e
 

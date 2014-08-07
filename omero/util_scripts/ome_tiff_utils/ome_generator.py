@@ -3,13 +3,7 @@ import sys
 from uuid import uuid1 as uuid
 from lxml import etree
 from lxml.builder import ElementMaker
-#from pylibtiff import TIFFimage
-try:
-    from libtiff import TIFF
-except:
-    import traceback
-    traceback.print_exc()
-    raw_input('enter to close')
+from libtiff import TIFF
 import numpy as np
 
 namespace_map=dict(bf = "http://www.openmicroscopy.org/Schemas/BinaryFile/2010-06",
@@ -22,10 +16,10 @@ namespace_map=dict(bf = "http://www.openmicroscopy.org/Schemas/BinaryFile/2010-0
 default_validate = False
 if default_validate:
     # use this when validating
-    ome = ElementMaker (namespace = namespace_map['ome'], nsmap = namespace_map) 
+    ome_elem = ElementMaker (namespace = namespace_map['ome'], nsmap = namespace_map) 
 else:
     # use this for creating imagej readable ome.tiff files.
-    ome = ElementMaker (nsmap = namespace_map) 
+    ome_elem = ElementMaker (nsmap = namespace_map) 
 
 bf = ElementMaker (namespace = namespace_map['bf'], nsmap = namespace_map)
 sa = ElementMaker (namespace = namespace_map['sa'], nsmap = namespace_map)
@@ -81,7 +75,7 @@ class ElementBase:
         
         n = self.__class__.__name__
         iter_mth = getattr(parent, 'iter_%s' % (n), None)
-        nsn = 'ome'
+        nsn = 'ome_elem'
         nm = n
         if '_' in n:
             nsn, nm = n.split('_',1)
@@ -97,59 +91,11 @@ class ElementBase:
 
 class TiffImageGenerator:
     
-    def __init__(self,instrument,filename,input_data,rotation,scalefact,outChan):
+    def __init__(self,instrument,filename,input_data,scalefact):
         self.instrument = instrument
         self.filename = filename
-        self.rotation = rotation
         self.scale = scalefact
         self.data = input_data
-<<<<<<< HEAD
-#
-#    def create_tile(self):
-        
-#    def create_plane(self):
-#        
-    def tif_data_from_imaris(self,pixelregion,outChan):
-        try:
-            imarray = self.data.get_data(self.scale, range(len(outChan)),pixelregion)
-            print 'imarray shape=',imarray.shape
-            shape_dum = imarray.shape
-            if self.instrument == 'Fluorescence':
-                im_dtype = np.dtype('uint8')
-                if self.rotation == 0:
-                    ImageData = np.zeros((len(outChan),shape_dum[0],shape_dum[1]),dtype=im_dtype)
-                else:
-                    ImageData = np.zeros((len(outChan),shape_dum[1],shape_dum[0]),dtype=im_dtype)
-    
-                if len(outChan) > 1:
-                    idx = -1
-                    for c in outChan:
-                        idx += 1
-                        print("Writing channel:  ", c+1)
-                        section = imarray[:,:,c]
-                        if self.rotation == 0:
-                            SectionRot = section
-                        elif self.rotation == 1:
-                            SectionRot = np.rot90(section,1)
-                        elif self.rotation == 2:
-                            SectionRot = np.rot90(section,3)
-                        ImageData[idx,:,:] = SectionRot
-    
-                else:
-                    section = imarray[:,:,outChan[0]]
-                    if self.rotation == 0:
-                        SectionRot = section
-                    elif self.rotation == 1:
-                        SectionRot = np.rot90(section,1)
-                    elif self.rotation == 2:
-                        SectionRot = np.rot90(section,3)
-                    ImageData[0,:,:] = SectionRot
-                
-                ImageDataMemSize = SectionRot.nbytes
-                if ImageDataMemSize > 2e9:
-                    raise FileSizeError(2e9)
-=======
-        self.channels = outChan
         
     def create_tiles(self,roi,sizeX, sizeY, sizeZ, sizeC, sizeT, tileWidth, tileHeight, description):
         tif_image = TIFF.open(self.filename, 'w')
@@ -157,11 +103,9 @@ class TiffImageGenerator:
         for c in range(0, sizeC):
             if c == 0:
                 tif_image.set_description(description)
->>>>>>> feature-tiling-output-images
                 
             tif_image.tile_image_params(sizeX,sizeY,sizeC,tileWidth,tileHeight)
-            channel = self.channels[c]
-            tile_num_in_channel = 0
+            
             for tileOffsetY in range(
                     0, ((sizeY + tileHeight - 1) / tileHeight)):
 
@@ -180,7 +124,7 @@ class TiffImageGenerator:
                         h = sizeY - y
 
                     tile_count += 1
-                    tile_data = self.mktile(roi,channel,x,y,w,h)
+                    tile_data = self.mktile(roi,c,x,y,w,h)
                     tile_dtype = tile_data.dtype
                     tile = np.zeros((1,tileWidth,tileHeight),dtype=tile_dtype)
                     tile[0,:h,:w] = tile_data[0,:,:]                     
@@ -191,9 +135,9 @@ class TiffImageGenerator:
         return tile_count
     
     def mktile(self,roi,channel,x,y,w,h):
-        row_start = y + roi[0]
+        row_start = y + roi[1]
         row_end = row_start + h
-        col_start = x + roi[2]
+        col_start = x + roi[0]
         col_end = col_start + w
         roi = [row_start,row_end,col_start,col_end]
         tile_data = self.data.get_data_in_channel(self.scale,channel,roi)
@@ -207,17 +151,11 @@ class TiffImageGenerator:
         for c in range(sizeC):
             if c == 0:
                 tif_image.set_description(description)
-            channel = self.channels[c]
             imarray = self.mkplane(roi,c)
             print 'imarray shape:',imarray.shape
             
             print("Writing channel:  ", c+1)
-            if self.rotation == 0:
-                plane = imarray[0,:,:] 
-            if self.rotation == 1:
-                plane = np.rot90(imarray[0,:,:],1)
-            elif self.rotation == 2:
-                plane = np.rot90(imarray[0,:,:],3)
+            plane = imarray[0,:,:]
                 
             image_data[c,:,:] = plane    
 #        tif_image = TIFFimage(image_data,description=description)
@@ -252,12 +190,12 @@ class OMEBase:
 
     def process(self, options=None, validate=default_validate):
         template_xml = list(self.make_xml())
-        tif_gen = TiffImageGenerator(self.instrument,self.tif_filename,self.imarray,self.rotation,self.scalefact,self.outChan)
+        tif_gen = TiffImageGenerator(self.instrument,self.tif_filename,self.slide,self.scalefact)
         self.tif_images[self.instrument,self.tif_filename,self.tif_uuid,self.PhysSize] = tif_gen
 
         s = None
         for (detector, fn, uuid, res), tif_gen in self.tif_images.items():
-            xml= ome.OME(ATTR('xsi','schemaLocation',"%s %s/ome.xsd" % ((namespace_map['ome'],)*2)),
+            xml= ome_elem.OME(ATTR('xsi','schemaLocation',"%s %s/ome.xsd" % ((namespace_map['ome'],)*2)),
                           UUID = uuid)
             for item in template_xml:
 
@@ -285,7 +223,7 @@ class OMEBase:
 
     def make_xml(self):
         self.temp_uuid = self._mk_uuid()
-        xml = ome.OME(ATTR('xsi','schemaLocation',"%s %s/ome.xsd" % ((namespace_map['ome'],)*2)),
+        xml = ome_elem.OME(ATTR('xsi','schemaLocation',"%s %s/ome.xsd" % ((namespace_map['ome'],)*2)),
                        UUID = self.temp_uuid)
         for element_cls in self._subelement_classes:
             element_cls(self, xml) # element_cls should append elements to root
