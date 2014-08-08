@@ -29,8 +29,10 @@ import time
 startTime = 0
 
 ADMIN_EMAIL = 'admin@omerocloud.qbi.uq.edu.au'
-PATH = os.path.join("/home/omero/OMERO.data/", "download")
-    
+PATH = os.path.join("/home/omero/", "download")
+REPO = '/omero.store/ManagedRepository/'    #prod sever
+# REPO = '/home/omero/OMERO.data/ManagedRepository/' #vm server
+
 class PILTiffTileReader:
  
     def __init__(self, imageName):
@@ -38,14 +40,14 @@ class PILTiffTileReader:
         self.seq = ImageSequence.Iterator(self.im)
         self.margin = 1
         
-    def getTile(self, channel, tileX, tileY, tileWidth, tileHeight):
+    def get_tile(self, channel, tileX, tileY, tileWidth, tileHeight):
         box = (tileX, tileY, tileX + tileWidth, tileY + tileHeight)
         return self.seq[channel].crop(box)
     
     def close(self):
         del self.im
 
-def printDuration(output=True):
+def print_duration(output=True):
     global startTime
     if startTime == 0:
         startTime = time.time()
@@ -91,7 +93,7 @@ def create_image_from_tiles(conn,source,image_name,image_path,description,box):
         return image
 
     def mktile(c, x, y, w, h):
-        tile = tile_source.getTile(c, x, y, w, h)
+        tile = tile_source.get_tile(c, x, y, w, h)
         return list(np.asanyarray(tile).flatten())
         
     class Iteration(TileLoopIteration):
@@ -179,7 +181,7 @@ def process_image(conn, imageId, parameterMap):
     if fileCount > 0:
         for origFile in image.getImportedImageFiles():
             name = origFile.getName()
-            path = '/home/omero/OMERO.data/ManagedRepository/' + origFile.getPath()
+            path = REPO + origFile.getPath()
     slide_name,slide_ext = os.path.splitext(name)        
     slide_path = os.path.abspath(path+name)
     print slide_path 
@@ -226,13 +228,14 @@ def process_image(conn, imageId, parameterMap):
         description = "Image from ROIS on parent Image:\n  Name: %s\n"\
             "  Image ID: %d" % (imageName, imageId)
         print description
- 
+        
+        tmp_path = create_path('omero','.tmp', folder=True)
         if (i + 1) < 10:
             new_image_name = slide_name + '_' + '00' + str(i + 1) + '.ome.tif'
-            outfilepath = PATH + '/' + new_image_name
+            outfilepath = tmp_path + '/' + new_image_name
         elif (i + 1) >= 10:
             new_image_name = slide_name + '_' + '0' + str(i + 1) + '.ome.tif'
-            outfilepath = PATH + '/' + new_image_name
+            outfilepath = tmp_path + '/' + new_image_name
         print 'new image path', outfilepath
         s = time.time()
         OMETIFF(None, name, outfilepath, imageId, len(rois), slide, r, 0).process()
@@ -240,7 +243,8 @@ def process_image(conn, imageId, parameterMap):
         p = time.time()
         newImg = create_image_from_tiles(conn,image,new_image_name,outfilepath,description,r)
         print 'tile uploading creation took:',time.time()-p,'seconds'
-        delete_roi_image(outfilepath)
+#         delete_roi_image(outfilepath)
+        remove_path(outfilepath)
         images.append(newImg)
         iIds.append(newImg.getId())
         
@@ -458,12 +462,12 @@ def runAsScript():
     The main entry point of the script, as called by the client via the
     scripting service, passing the required parameters.
     """
-    printDuration(False)    # start timer
+    print_duration(False)    # start timer
     dataTypes = [rstring('Dataset'), rstring('Image')]
 
     client = scripts.client(
         'Images_From_ROIs.py',
-        """Crop rectangular regions from slide scanner images. WARNING: THIS PROCESS CAN TAKE A LONG TIME - APPROX MAXIMUM BATCH SIZE IS 10 ROIs!""",
+        """Crop rectangular regions from slide scanner images.""",
 
         scripts.String(
             "Data_Type", optional=False, grouping="1",
@@ -512,15 +516,7 @@ def runAsScript():
 
     finally:
         client.closeSession()
-        printDuration()
+        print_duration()
 
 if __name__ == "__main__":
     runAsScript()
-#     box = [150, 150, 75, 225]
-#     Largeshape = [400, 400]
-#     block_size = [50, 50]
-#     mblocks = float(box[2])/float(block_size[0])
-#     nblocks = float(box[3])/float(block_size[1])
-#     largeimage = np.ones((400,400))
-#     tile = tile_image_gen(largeimage,box)
-#     print tile.shape
