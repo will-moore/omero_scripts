@@ -44,8 +44,8 @@ def create_image_from_tiles(conn,source,image_name,description,box):
     sizeZ = source.getSizeZ()
     sizeT = source.getSizeT()
     sizeC = source.getSizeC()
-    tileWidth = 512
-    tileHeight = 512
+    tileWidth = 1024
+    tileHeight = 1024
     primary_pixels = source.getPrimaryPixels()
            
     def create_image():

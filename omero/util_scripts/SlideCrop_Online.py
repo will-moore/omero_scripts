@@ -31,19 +31,6 @@ startTime = 0
 ADMIN_EMAIL = 'admin@omerocloud.qbi.uq.edu.au'
 PATH = os.path.join("/home/omero/OMERO.data/", "download")
     
-def printDuration(output=True):
-    global startTime
-    if startTime == 0:
-        startTime = time.time()
-    if output:
-        print "Script timer = %s secs" % (time.time() - startTime)
-        
-def delete_roi_image(filepath):
-    try:
-        os.remove(filepath)
-    except OSError:
-        pass        
-
 class PILTiffTileReader:
  
     def __init__(self, imageName):
@@ -57,6 +44,19 @@ class PILTiffTileReader:
     
     def close(self):
         del self.im
+
+def printDuration(output=True):
+    global startTime
+    if startTime == 0:
+        startTime = time.time()
+    if output:
+        print "Script timer = %s secs" % (time.time() - startTime)
+        
+def delete_roi_image(filepath):
+    try:
+        os.remove(filepath)
+    except OSError:
+        pass        
         
 def create_image_from_tiles(conn,source,image_name,image_path,description,box):
         
@@ -68,8 +68,8 @@ def create_image_from_tiles(conn,source,image_name,image_path,description,box):
     sizeZ = source.getSizeZ()
     sizeT = source.getSizeT()
     sizeC = source.getSizeC()
-    tileWidth = 512
-    tileHeight = 512
+    tileWidth = 1024
+    tileHeight = 1024
            
     def create_image():
         query = "from PixelsType as p where p.value='uint8'"
