@@ -74,8 +74,8 @@ class OMETIFF(OMEBase):
         self.sizeX = self.roi[2]
         self.sizeY = self.roi[3]          
         self.sizeZ = int(ImageData['Z'])
-        self.sizeC = meta.numChannels
-        self.sizeT = meta.time_points()
+        self.sizeC = meta.sizeC
+        self.sizeT = meta.sizeT
 
         if self.sizeT == 1:
             TimeIncrement = '0.0'
