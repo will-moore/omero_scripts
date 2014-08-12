@@ -269,19 +269,19 @@ NOTE THAT CONVERSION OF COORDINATES TO NM IS NOT REQUIRED FOR ZEISS DATASETS""",
         description="ID of file to process"),
         
     scripts.String("File_Type", optional=False, grouping="04",
-        description="Indicate the type of data being processed", values=fileTypes, default="localizer"),
+        description="Indicate the type of data being processed", values=fileTypes, default="zeiss2d"),
         
     scripts.Int("SR_pixel_size", optional=False, grouping="05",
         description="Pixel size in super resolved image in nm"),
 
     scripts.Bool("Convert_coordinates_to_nm", optional=False, grouping="06.1",
-        description="Convert localisation coordinates to nm - DO NOT USE WITH ZEISS DATA", default=True),
+        description="Convert localisation coordinates to nm - DO NOT USE WITH ZEISS DATA", default=False),
                             
     scripts.Int("Parent_Image_Pixel_Size", grouping="06.2",
         description="Convert the localisation coordinates to nm (multiply by parent image pixel size)"),
         
     scripts.Int("Max_radius", optional=False, grouping="07",
-        description="Maximum distance scale for calculation in nm", default=100),
+        description="Maximum distance scale for calculation (in nm)", default=100),
         
     version = "5.0.2",
     authors = ["Daniel Matthews", "QBI"],

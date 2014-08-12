@@ -60,7 +60,10 @@ def parse_sr_data(path,file_type,pix_size=95):
         chancol = FILE_TYPES[file_type]['chan_col']
     else:
         sizeC = 1
-        chancol = None  
+        chancol = None
+    if 'zeiss' in file_type:
+        pix_size = 1 #override pixel size when using zeiss data
+          
     s = time.time()
     print 'footerlines=',footerlines
     try:
@@ -110,13 +113,19 @@ def process_data(conn,script_params,file_id,coords,sr_pix_size,nm_per_pixel):
     
     imageName = image.getName()
     name,ext = os.path.splitext(imageName)
-    new_name = name + '_sr_histogram' + ext
+    if 'ome' in name:
+        name = name.split('.')[0]
+        new_name = name + '_sr_histogram.ome' + ext
+    else:
+        new_name = name + '_sr_histogram' + ext
     parentDataset = image.getParent()
     parentProject = parentDataset.getParent()
     updateService = conn.getUpdateService()
     
-    frame_width = image.getSizeX() 
+    frame_width = image.getSizeX()
+    print 'frame_width',frame_width
     frame_height = image.getSizeY()
+    print 'frame_height',frame_height 
     sizeT = 1
     sizeZ = 1
     if 'czi' in ext:
@@ -230,12 +239,12 @@ def run_as_script():
         description="ID of file to process"),
         
     scripts.String("File_Type", optional=False, grouping="04",
-        description="Indicate the type of data being processed", values=fileTypes, default="localizer"),
+        description="Indicate the type of data being processed", values=fileTypes, default="zeiss2d"),
         
     scripts.Int("SR_pixel_size", optional=False, grouping="05",
         description="Pixel size in super resolved image in nm"),
                             
-    scripts.Int("Parent_Image_Pixel_Size", grouping="06",
+    scripts.Int("Parent_Image_Pixel_Size", optional=False, grouping="06",
         description="Convert the localisation coordinates to nm (multiply by parent image pixel size)"),
         
     version = "5.0.2",

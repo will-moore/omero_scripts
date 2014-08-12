@@ -12,7 +12,7 @@ from numpy import array
 from omero.gateway import BlitzGateway
 import omero
 from omero.rtypes import *
-from tables import *
+from omero.util.temp_files import create_path,remove_path
 from distance_functions import nearest_neighbour
 
 FILE_TYPES = {'localizer':{'numColumns': 12, 'name': 'localizer', 'frame': 0, 'intensity': 1, 'z_col': None, 'psf_sigma': 2, 'headerlines': 5, 'x_col': 3, 'y_col': 4}, 
@@ -21,9 +21,6 @@ FILE_TYPES = {'localizer':{'numColumns': 12, 'name': 'localizer', 'frame': 0, 'i
               'zeiss2d2chan':{'numColumns': 14, 'name': 'zeiss2d', 'frame': 1, 'intensity': 7, 'z_col': None, 'psf_sigma': 6, 'headerlines': 1, 'x_col': 4, 'y_col': 5,'chan_col':14}}
 PATH = os.path.join("/home/omero/OMERO.data/", "download")
 
-class NNHistogram(IsDescription):
-    bins = FloatCol()      # double (double-precision)
-    counts = FloatCol()      # double (double-precision)
     
 def get_rectangles(conn, imageId, pix_size):
     """
@@ -159,55 +156,58 @@ def delete_downloaded_data(ann):
     except OSError:
         pass
     
-# def put_data_in_table(conn, imageIds, roiIds, neighbours, histogram, bins):
-#     columns = [
+def put_data_in_table(conn, imageIds, roiIds, neighbours, histogram, bins):
+    columns = [
 #         omero.grid.LongColumn('imageId', '', []),
 #         omero.grid.RoiColumn('roidId', '', []),
-#         omero.grid.DoubleColumn('histogram bins', '', [])
-#         ]
-# #     
-# #     nn_columns = []
-# #     hist_columns = []
-# #     nn_headers = []
-# #     hist_headers = []
-# #     for r in range(len(roiIds)):
-# #         nn_str = 'near neighbours in roi %s' %r
-# #         hist_str = 'histogram data in roi %s' %r
-# #         nn_headers.append(nn_str)
-# #         hist_headers.append(hist_str)
-# #         nn_columns.append(omero.grid.DoubleColumn(nn_str, '', []))
-# #         hist_columns.append(omero.grid.DoubleColumn(hist_str, '', []))
-# #     print 'nn_headers:',nn_headers
-#     # create and initialize the table
-#     nn_columns = [omero.grid.DoubleArrayColumn('near neighbours', '', [])]
-#     table = conn.c.sf.sharedResources().newTable(1, "Near Neighbours%s" % str(random()))
-#     print table
-#     table.initialize(nn_columns)  
-#      
-#     # Prepare data for adding to OMERO table.
-# #     data = [
-# #         omero.grid.LongColumn('imageId', '', imageIds),
-# #         omero.grid.RoiColumn('roidId', '', roiIds),
-# #         omero.grid.DoubleColumn('histogram bins', '', bins)
-# #         ]
-# #     nn_data = []
-# #     hist_data = []
-# #     for r in range(len(roiIds)):
-# #         print 'nn_headers[r]:',nn_headers[r]
-# #         nn_data.append(omero.grid.DoubleColumn(nn_headers[r], '',neighbours[r]))
-# #         hist_data.append(omero.grid.DoubleColumn(hist_headers[r], '',histogram[r]))
-#     nn_data = [omero.grid.DoubleArrayColumn('near neighbours', '', neighbours)]
-#     table.addData(nn_data)
-#     table.close()
-    # get the table as an original file & attach this data to Dataset
+        omero.grid.DoubleColumn('histogram bins', '', [])
+        ]
 #     
-#     orig_file = table.getOriginalFile()
-#     fileAnn = omero.model.FileAnnotationI()
-#     fileAnn.setFile(orig_file)
-#     link = omero.model.ImageAnnotationLinkI()
-#     link.setParent(omero.model.ImageI(imageIds[0], False))
-#     link.setChild(fileAnn)
-#     conn.getUpdateService().saveAndReturnObject(link)
+#     nn_columns = []
+    hist_columns = []
+#     nn_headers = []
+    hist_headers = []
+    for r in range(len(roiIds)):
+#         nn_str = 'near neighbours in roi %s' %r
+        hist_str = 'histogram data in roi %s' %r
+#         nn_headers.append(nn_str)
+        hist_headers.append(hist_str)
+#         nn_columns.append(omero.grid.DoubleColumn(nn_str, '', []))
+        hist_columns.append(omero.grid.DoubleColumn(hist_str, '', []))
+#     print 'nn_headers:',nn_headers
+
+    # create and initialize the table
+    table = conn.c.sf.sharedResources().newTable(1, "Near Neighbours%s" % str(random()))
+    table.initialize(columns)  
+      
+    # Prepare data for adding to OMERO table.
+    data = [
+#         omero.grid.LongColumn('imageId', '', imageIds),
+#         omero.grid.RoiColumn('roidId', '', roiIds),
+        omero.grid.DoubleColumn('histogram bins', '', bins)
+        ]
+    
+    print 'number of histogram bins:',bins.shape
+    print 'length histogram data:',histogram[0].shape
+#     nn_data = []
+    hist_data = []
+    for r in range(len(roiIds)):
+#         print 'nn_headers[r]:',nn_headers[r]
+#         nn_data.append(omero.grid.DoubleColumn(nn_headers[r], '',neighbours[r]))
+        hist_data.append(omero.grid.DoubleColumn(hist_headers[r], '',histogram[0,:,r]))
+        
+    table.addData(data)
+    table.close()
+    
+#     get the table as an original file & attach this data to iamge
+    print 'imageIds:',imageIds
+    orig_file = table.getOriginalFile()
+    fileAnn = omero.model.FileAnnotationI()
+    fileAnn.setFile(orig_file)
+    link = omero.model.ImageAnnotationLinkI()
+    link.setParent(omero.model.ImageI(imageIds[0], False))
+    link.setChild(fileAnn)
+    conn.getUpdateService().saveAndReturnObject(link)
       
 def process_data(conn,image,rectangles,coords):
     """
@@ -232,7 +232,7 @@ def process_data(conn,image,rectangles,coords):
             nn_hist[c,:,i] = hist
         nn_data.append(nn)
         
-    return nn_data,nn_hist,dist_bins
+    return nn_data,nn_hist,dist_bins[:-1]
                             
 def run_processing(conn,script_params):
     file_anns = []
@@ -331,13 +331,13 @@ def run_as_script():
         description="ID of file to process"),
         
     scripts.String("File_Type", optional=False, grouping="04",
-        description="Indicate the type of data being processed", values=fileTypes, default="localizer"),
+        description="Indicate the type of data being processed", values=fileTypes, default="zeiss2d"),
         
     scripts.Int("SR_pixel_size", optional=False, grouping="05",
         description="Pixel size in super resolved image in nm"),
 
     scripts.Bool("Convert_coordinates_to_nm", optional=False, grouping="06.1",
-        description="Convert localisation coordinates to nm - DO NOT USE WITH ZEISS DATA", default=True),
+        description="Convert to nm - DO NOT USE WITH ZEISS DATA", default=False),
                             
     scripts.Int("Parent_Image_Pixel_Size", grouping="06.2",
         description="Convert the localisation coordinates to nm (multiply by parent image pixel size)"),

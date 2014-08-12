@@ -12,54 +12,23 @@ from numpy import array
 from omero.gateway import BlitzGateway
 import omero
 from omero.rtypes import *
+from hist_data import calc_hist
 
 FILE_TYPES = {'localizer':{'numColumns': 12, 'name': 'localizer', 'frame': 0, 'intensity': 1, 'z_col': None, 'psf_sigma': 2, 'headerlines': 5, 'x_col': 3, 'y_col': 4}, 
               'quickpalm':{'numColumns': 15, 'name': 'quickpalm', 'frame': 14, 'intensity': 1, 'z_col': 6, 'psf_sigma': None, 'headerlines': 1, 'x_col': 2, 'y_col': 3},
               'zeiss2d':{'numColumns': 13, 'name': 'zeiss2d', 'frame': 1, 'intensity': 7, 'z_col': None, 'psf_sigma': 6, 'headerlines': 1, 'x_col': 4, 'y_col': 5},
-              'zeiss3d':{'numColumns': 13, 'name': 'zeiss3d', 'frame': 1, 'intensity': 7, 'z_col': 7, 'psf_sigma': 6, 'headerlines': 1, 'x_col': 4, 'y_col': 5},
               'zeiss2d2chan':{'numColumns': 14, 'name': 'zeiss2d2chan', 'frame': 1, 'intensity': 7, 'z_col': None, 'psf_sigma': 6, 'headerlines': 1, 'x_col': 4, 'y_col': 5,'chan_col':14}}
 PATH = os.path.join("/home/omero/OMERO.data/", "download")
 
-def get_rectangles(conn, imageId, pix_size):
-    """
-        Returns a list of (x, y, width, height, zStart, zStop, tStart, tStop)
-        of each rectange ROI in the image
-    """
-
-    rois = []
-
-    roiService = conn.getRoiService()
-    result = roiService.findByImage(imageId, None)
-
-    for roi in result.rois:
-        zStart = None
-        zEnd = 0
-        tStart = None
-        tEnd = 0
-        x = None
-        for shape in roi.copyShapes():
-            if type(shape) == omero.model.RectI:
-                # check t range and z range for every rectangle
-                t = shape.getTheT().getValue()
-                z = shape.getTheZ().getValue()
-                if tStart is None:
-                    tStart = t
-                if zStart is None:
-                    zStart = z
-                tStart = min(t, tStart)
-                tEnd = max(t, tEnd)
-                zStart = min(z, zStart)
-                zEnd = max(z, zEnd)
-                if x is None: # get x, y, width, height for first rect only
-                    x = int(shape.getX().getValue())
-                    y = int(shape.getY().getValue())
-                    width = int(shape.getWidth().getValue())
-                    height = int(shape.getHeight().getValue())
-        # if we have found any rectangles at all...
-        if zStart is not None:
-            rois.append((x*pix_size, y*pix_size, width*pix_size, height*pix_size, zStart, zEnd, tStart, tEnd))
-
-    return rois
+def get_frame_indices(start,stop,duration,overlap):
+    num_frames = (stop - duration)/(duration - overlap)
+    start_frames = [start]
+    for f in range(num_frames):
+        start = start + (duration - overlap)
+        start_frames.append(start)
+        
+    stop_frames = [sf + duration - 1 for sf in start_frames]
+    return start_frames,stop_frames, num_frames      
 
 def get_all_locs_in_chan(all_data,col,chan=0,chancol=None):
     if chancol:
@@ -69,12 +38,13 @@ def get_all_locs_in_chan(all_data,col,chan=0,chancol=None):
     coords = np.zeros((idx.shape[0]))
     coords[:] = all_data[idx,col]
     return coords
-    
+        
 def get_all_xycoords(all_data,xcol,ycol,sizeC,chancol,pix_size):
     """
         Returns the xy coordinates from the input data in a numpy array
     """   
     coords = np.zeros((sizeC,all_data.shape[0],2))
+    print coords.shape
     for c in range(sizeC):
         print get_all_locs_in_chan(all_data,xcol,c,chancol).shape
         coords[c,:,0] = get_all_locs_in_chan(all_data,xcol,c,chancol)*pix_size #convert to nm --> camera pixel size
@@ -91,6 +61,7 @@ def parse_sr_data(path,file_type,pix_size=95):
     num_columns = working_file_type['numColumns']
     xcol = working_file_type['x_col']
     ycol = working_file_type['y_col']
+    fcol = working_file_type['frame']
     if 'zeiss2d' in file_type:
         footerlines = 8
     else:
@@ -100,8 +71,12 @@ def parse_sr_data(path,file_type,pix_size=95):
         chancol = FILE_TYPES[file_type]['chan_col']
     else:
         sizeC = 1
-        chancol = None   
+        chancol = None
+    if 'zeiss' in file_type:
+        pix_size = 1 #override pixel size when using zeiss data
+                  
     s = time.time()
+    print 'footerlines=',footerlines
     try:
         data = np.genfromtxt(path,usecols=range(num_columns),skip_header=headerlines,skip_footer=footerlines,dtype='float')
     except ValueError:
@@ -111,7 +86,8 @@ def parse_sr_data(path,file_type,pix_size=95):
         raise
     print 'reading the file took:',time.time()-s,'seconds'
     coords = get_all_xycoords(data,xcol,ycol,sizeC,chancol,pix_size)
-    return coords    
+    frames = data[:,fcol]
+    return coords,frames   
 
 def download_data(ann):
     """
@@ -137,54 +113,107 @@ def delete_downloaded_data(ann):
     except OSError:
         pass
     
-def get_coords_in_roi(all_coords,roi):
+def process_data(conn,script_params,file_id,coords,sr_pix_size,nm_per_pixel,frames,starts,stops,sizeT):
     """
-        Returns the xy coordinates of the rectangular roi being processed
-    """
-    #convert to nm --> sr image pixel size
-    xstart = roi[0]
-    xstop = roi[0]+roi[2]
-    ystart = roi[1]
-    ystop = roi[1]+roi[3]
-    return all_coords[(all_coords[:,0] > xstart) & (all_coords[:,0] < xstop)
-                      & (all_coords[:,1] > ystart) & (all_coords[:,1] < ystop)]
-    
-def process_data(conn,image,rectangles,coords):
-    """
-        Get the coordinates in each roi, write to a file
-        and append to dataset
+        Calculates the neighbour distance in all the rectangular rois
     """    
-    message = ""
-    for i,rect in enumerate(rectangles):
-        locs_list = []
-        for c in range(coords.shape[0]):
-            locs = get_coords_in_roi(coords[c,:,:],rect)
-            locs_list.append(locs)
-        file_name = "coords_in_roi_%s.csv" % i
-        try:
-            f = open(file_name,'w')
-            for r in range(locs.shape[0]):
-                row = locs[r,:]
-                f.write(','.join([str(c) for c in row])+'\n')
-        finally:
-            f.close()
-
-        new_file_ann, faMessage = script_util.createLinkFileAnnotation(
-            conn, file_name, image, output="wrote coords file",
-            mimetype="text/csv", desc=None)
-        message += faMessage
-    return message
-                            
-def run_processing(conn,script_params):
-    file_anns = []
-    message = ""
-    
     image_id = script_params['ImageID']
     image = conn.getObject("Image",image_id)
     if not image:
         message = 'Could not find specified image'
         return message
+    
+    imageName = image.getName()
+    name,ext = os.path.splitext(imageName)
+    if 'ome' in name:
+        name = name.split('.')[0]
+        new_name = name + '_sr_histogram.ome' + ext
+    else:
+        new_name = name + '_sr_histogram' + ext
+    parentDataset = image.getParent()
+    parentProject = parentDataset.getParent()
+    updateService = conn.getUpdateService()
+    
+    frame_width = image.getSizeX() 
+    frame_height = image.getSizeY()
+    print 'frame_width',frame_width
+    print 'frame_height',frame_height
+    sizeZ = 1
+    if 'czi' in ext:
+        num_frames = image.getSizeT()
+    else:
+        num_frames = image.getSizeZ()
+    if 'zeiss2d2chan' in script_params['File_Type']:
+        sizeC = 2
+    else:
+        sizeC = 1
+    binsx = (frame_width * nm_per_pixel) / sr_pix_size
+    binsy = (frame_height * nm_per_pixel) / sr_pix_size
+    hist_data = np.zeros((sizeC,binsy,binsx))
+    hist_frames = []
+    for c in range(sizeC):
+        for f in range(sizeT):
+            print 'start',starts[f]
+            print 'stop',stops[f]
+            idx = np.where((frames >= starts[f]) & (frames <= stops[f]))
+            coords_in_frames = coords[c,idx,:]
+            print 'coords shape',coords.shape
+            print 'coords_in_frames',coords_in_frames.shape
+            hist = calc_hist('2d',coords_in_frames,num_frames,binsy,binsx)
+            hist_data[c,:,:] = hist
+            hist_frames.append(hist_data)
         
+    def plane_gen():
+        for z in range(sizeZ):
+            for c in range(sizeC):
+                for t in range(sizeT):
+                    plane = hist_frames[t]
+                    yield plane[c,:,:]     
+                    
+    description = "Created from image:\n  Name: %s\n  File ID: %d" % (imageName, file_id)
+    newImg = conn.createImageFromNumpySeq(
+        plane_gen(), new_name,
+        sizeZ=sizeZ, sizeC=sizeC, sizeT=sizeT,
+        description=description)
+
+    if newImg:
+        iid = newImg.getId()
+        print "New Image Id = %s" % iid
+        # put new images in existing dataset
+        dataset = None
+        if parentDataset is not None and parentDataset.canLink():
+            parentDataset = parentDataset._obj
+        else:
+            parentDataset = None
+        parentProject = None    # don't add Dataset to parent.
+    
+        if parentDataset is None:
+            link = None
+            print "No dataset created or found for new images."\
+                " Images will be orphans."
+        else:
+            dsLink = omero.model.DatasetImageLinkI()
+            dsLink.parent = omero.model.DatasetI(
+                parentDataset.id.val, False)
+            dsLink.child = omero.model.ImageI(iid, False)
+            updateService.saveObject(dsLink)
+            if parentProject and parentProject.canLink():
+                # and put it in the   current project
+                projectLink = omero.model.ProjectDatasetLinkI()
+                projectLink.parent = omero.model.ProjectI(
+                    parentProject.getId(), False)
+                projectLink.child = omero.model.DatasetI(
+                    dataset.id.val, False)
+                updateService.saveAndReturnObject(projectLink)   
+        message = 'Super resolution histogram successfully created'
+    else:
+        message = 'Something went wrong, could not make super resolution histogram'
+    return message
+                   
+def run_processing(conn,script_params):
+    file_anns = []
+    message = ""
+           
     file_id = script_params['AnnotationID']
     ann = conn.getObject("Annotation",file_id)
     if not ann:
@@ -193,23 +222,21 @@ def run_processing(conn,script_params):
     
     #other parameters
     sr_pix_size = script_params['SR_pixel_size']
-    if script_params['Convert_coordinates_to_nm']:
-        cam_pix_size = script_params['Parent_Image_Pixel_Size']
-    else:
-        cam_pix_size = 1
-        
+    cam_pix_size = script_params['Parent_Image_Pixel_Size']
     file_type = script_params['File_Type']
-     
+    start = script_params['Start_Frame']
+    stop = script_params['Stop_Frame']
+    duration = script_params['Frame_Duration']
+    overlap = script_params['Overlap']
+
     path_to_ann = ann.getFile().getPath() + '/' + ann.getFile().getName()
     name,ext = os.path.splitext(path_to_ann)
     if ('txt' in ext) or ('csv' in ext):
         path_to_data = download_data(ann)
-        coords = parse_sr_data(path_to_data,file_type,cam_pix_size)
-        rectangles = get_rectangles(conn,image_id,sr_pix_size)
-        faMessage = process_data(conn,image,rectangles,coords)
-    else:
-        message = 'file annotation must be txt or csv'
-        return message
+        coords,frames = parse_sr_data(path_to_data,file_type,cam_pix_size)
+        starts,stops,num_frames = get_frame_indices(start,stop,duration,overlap)
+        faMessage = process_data(conn,script_params,file_id,coords,sr_pix_size,cam_pix_size,frames,starts,stops,num_frames)
+
     # clean up
     delete_downloaded_data(ann)
     
@@ -225,14 +252,13 @@ def run_as_script():
     
     fileTypes = [k for k in FILE_TYPES.iterkeys()]
 
-    client = scripts.client('Get_Coordinates_in_ROI.py', """This script searches an attached SR dataset for coords defined by an ROI. 
-Note you do not need to convert Zeiss data to nm""",
+    client = scripts.client('Build_2D_Histograms_From_Localisations.py', """This script creates a 2D histogram from a locaisation microscopy dataset""",
 
     scripts.String("Data_Type", optional=False, grouping="01",
         description="Choose source of images (only Image supported)", values=dataTypes, default="Image"),
         
     scripts.Int("ImageID", optional=False, grouping="02",
-        description="ID of super resolved image to process"),
+        description="ID of parent localisation microscopy movie"),
         
     scripts.Int("AnnotationID", optional=False, grouping="03",
         description="ID of file to process"),
@@ -242,12 +268,21 @@ Note you do not need to convert Zeiss data to nm""",
         
     scripts.Int("SR_pixel_size", optional=False, grouping="05",
         description="Pixel size in super resolved image in nm"),
-
-    scripts.Bool("Convert_coordinates_to_nm", optional=False, grouping="06.1",
-        description="Convert localisation coordinates to nm - DO NOT USE WITH ZEISS DATA", default=False),
                             
-    scripts.Int("Parent_Image_Pixel_Size", grouping="06.2",
+    scripts.Int("Parent_Image_Pixel_Size", optional=False, grouping="06",
         description="Convert the localisation coordinates to nm (multiply by parent image pixel size)"),
+                            
+    scripts.Int("Start_Frame", optional=False, grouping="07.1",
+        description="starting frame in raw data"),                            
+
+    scripts.Int("Stop_Frame", optional=False, grouping="07.2",
+        description="stopping frame in raw data"), 
+                            
+    scripts.Int("Frame_Duration", optional=False, grouping="07.3",
+        description="Number of raw frames used in each histogram frame"),
+                            
+    scripts.Int("Overlap", optional=False, grouping="07.4",
+        description="Number of frames to overlap for sliding average"),  
         
     version = "5.0.2",
     authors = ["Daniel Matthews", "QBI"],
