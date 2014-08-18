@@ -113,7 +113,7 @@ def delete_downloaded_data(ann):
     except OSError:
         pass
     
-def process_data(conn,script_params,file_id,coords,sr_pix_size,nm_per_pixel,frames,starts,stops,sizeT):
+def process_data(conn,script_params,file_id,coords,nm_per_pixel,frames):
     """
         Calculates the neighbour distance in all the rectangular rois
     """    
@@ -123,21 +123,20 @@ def process_data(conn,script_params,file_id,coords,sr_pix_size,nm_per_pixel,fram
         message = 'Could not find specified image'
         return message
     
+    #set parameters
     imageName = image.getName()
     name,ext = os.path.splitext(imageName)
     if 'ome' in name:
         name = name.split('.')[0]
-        new_name = name + '_sr_histogram.ome' + ext
+        new_name = name + '_sr_timelapse_histogram.ome' + ext
     else:
-        new_name = name + '_sr_histogram' + ext
+        new_name = name + '_sr_timelapse_histogram' + ext
     parentDataset = image.getParent()
     parentProject = parentDataset.getParent()
     updateService = conn.getUpdateService()
     
     frame_width = image.getSizeX() 
     frame_height = image.getSizeY()
-    print 'frame_width',frame_width
-    print 'frame_height',frame_height
     sizeZ = 1
     if 'czi' in ext:
         num_frames = image.getSizeT()
@@ -147,19 +146,33 @@ def process_data(conn,script_params,file_id,coords,sr_pix_size,nm_per_pixel,fram
         sizeC = 2
     else:
         sizeC = 1
+        
+    if script_params['Start_Frame'] == -1:
+        start = 1
+    else:
+        start = script_params['Start_Frame']
+    if script_params['Stop_Frame'] == -1:
+        stop = num_frames
+    else:
+        stop = script_params['Stop_Frame']
+    duration = script_params['Frame_Duration']
+    if script_params['Overlap'] == -1:
+        overlap = 0
+    else:
+        overlap = duration - script_params['Overlap']
+    starts,stops,sizeT = get_frame_indices(start,stop,duration,overlap)
+    sr_pix_size = script_params['SR_pixel_size']
+    
+    #calculate histogram
     binsx = (frame_width * nm_per_pixel) / sr_pix_size
     binsy = (frame_height * nm_per_pixel) / sr_pix_size
     hist_data = np.zeros((sizeC,binsy,binsx))
     hist_frames = []
     for c in range(sizeC):
         for f in range(sizeT):
-            print 'start',starts[f]
-            print 'stop',stops[f]
             idx = np.where((frames >= starts[f]) & (frames <= stops[f]))
             coords_in_frames = coords[c,idx,:]
-            print 'coords shape',coords.shape
-            print 'coords_in_frames',coords_in_frames.shape
-            hist = calc_hist('2d',coords_in_frames,num_frames,binsy,binsx)
+            hist = calc_hist('2d',coords_in_frames,binsy,binsx)
             hist_data[c,:,:] = hist
             hist_frames.append(hist_data)
         
@@ -221,21 +234,16 @@ def run_processing(conn,script_params):
         return message
     
     #other parameters
-    sr_pix_size = script_params['SR_pixel_size']
     cam_pix_size = script_params['Parent_Image_Pixel_Size']
     file_type = script_params['File_Type']
-    start = script_params['Start_Frame']
-    stop = script_params['Stop_Frame']
-    duration = script_params['Frame_Duration']
-    overlap = script_params['Overlap']
+
 
     path_to_ann = ann.getFile().getPath() + '/' + ann.getFile().getName()
     name,ext = os.path.splitext(path_to_ann)
     if ('txt' in ext) or ('csv' in ext):
         path_to_data = download_data(ann)
         coords,frames = parse_sr_data(path_to_data,file_type,cam_pix_size)
-        starts,stops,num_frames = get_frame_indices(start,stop,duration,overlap)
-        faMessage = process_data(conn,script_params,file_id,coords,sr_pix_size,cam_pix_size,frames,starts,stops,num_frames)
+        faMessage = process_data(conn,script_params,file_id,coords,cam_pix_size,frames)
 
     # clean up
     delete_downloaded_data(ann)
@@ -270,19 +278,19 @@ def run_as_script():
         description="Pixel size in super resolved image in nm"),
                             
     scripts.Int("Parent_Image_Pixel_Size", optional=False, grouping="06",
-        description="Convert the localisation coordinates to nm (multiply by parent image pixel size)"),
+        description="Required to calculate number of xy bins in histogram"),
                             
     scripts.Int("Start_Frame", optional=False, grouping="07.1",
-        description="starting frame in raw data"),                            
+        description="starting frame in raw data (-1 for first frame)",default="-1"),                            
 
     scripts.Int("Stop_Frame", optional=False, grouping="07.2",
-        description="stopping frame in raw data"), 
+        description="stopping frame in raw data (-1 for final frame)",default="-1"), 
                             
     scripts.Int("Frame_Duration", optional=False, grouping="07.3",
-        description="Number of raw frames used in each histogram frame"),
+        description="Number of raw frames used in each histogram frame",default="2000"),
                             
     scripts.Int("Overlap", optional=False, grouping="07.4",
-        description="Number of frames to overlap for sliding average"),  
+        description="Number of frames to overlap for sliding average (referenced from frame start)",default="-1"),  
         
     version = "5.0.2",
     authors = ["Daniel Matthews", "QBI"],
