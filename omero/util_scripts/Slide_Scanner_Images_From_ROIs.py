@@ -64,26 +64,21 @@ def create_image_from_tiles(conn,source,image_name,description,box):
         image = conn.getObject("Image", iId)
         return image
 
+
+    # Create image and init rawPixelsStore etc.
+    new_image = create_image()
+    pid = new_image.getPixelsId()
+    loop = RPSTileLoop(conn.c.sf, PixelsI(pid, False))  
+
+
     # Make a list of all the tiles we're going to need.
-    # This is the SAME ORDER that RPSTileLoop will ask for them.
+    # This is the same order that RPSTileLoop will ask for them.
     zctTileList = []
-    for t in range(0, sizeT):
-        for c in range(0, sizeC):
-            for z in range(0, sizeZ):
-                for tileOffsetY in range(
-                        0, ((sizeY + tileHeight - 1) / tileHeight)):
-                    for tileOffsetX in range(
-                            0, ((sizeX + tileWidth - 1) / tileWidth)):
-                        x = tileOffsetX * tileWidth
-                        y = tileOffsetY * tileHeight
-                        w = tileWidth
-                        if (w + x > sizeX):
-                            w = sizeX - x
-                        h = tileHeight
-                        if (h + y > sizeY):
-                            h = sizeY - y
-                        tile_xywh = (box[0] + x, box[1] + y, w, h)
-                        zctTileList.append((z, c, t, tile_xywh))
+    for t in loop.getTileSequence(sizeX, sizeY, sizeZ, sizeC, sizeT,
+                    tileWidth, tileHeight):
+        tile_xywh = (box[0] + t['x'], box[1] + t['y'], t['w'], t['h'])
+        zctTileList.append((t['z'], t['c'], t['t'], tile_xywh))
+
 
     # This is a generator that will return tiles in the sequence above
     # getTiles() only opens 1 rawPixelsStore for all the tiles
@@ -100,10 +95,7 @@ def create_image_from_tiles(conn,source,image_name,description,box):
             # tile2d = faketile(tileWidth, tileHeight)
             tile2d = nextTile()
             data.setTile(tile2d, z, c, t, x, y, tileWidth, tileHeight)
-            
-    new_image = create_image()
-    pid = new_image.getPixelsId()
-    loop = RPSTileLoop(conn.c.sf, PixelsI(pid, False))  
+
     loop.forEachTile(tileWidth, tileHeight, Iteration())
 
     for theC in range(sizeC):
