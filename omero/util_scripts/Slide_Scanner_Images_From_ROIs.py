@@ -74,15 +74,15 @@ def create_image_from_tiles(conn,source,image_name,description,box):
                         0, ((sizeY + tileHeight - 1) / tileHeight)):
                     for tileOffsetX in range(
                             0, ((sizeX + tileWidth - 1) / tileWidth)):
-                        x = box[0] + tileOffsetX * tileWidth
-                        y = box[1] + tileOffsetY * tileHeight
+                        x = tileOffsetX * tileWidth
+                        y = tileOffsetY * tileHeight
                         w = tileWidth
                         if (w + x > sizeX):
                             w = sizeX - x
                         h = tileHeight
                         if (h + y > sizeY):
                             h = sizeY - y
-                        tile_xywh = (x, y, w, h)
+                        tile_xywh = (box[0] + x, box[1] + y, w, h)
                         zctTileList.append((z, c, t, tile_xywh))
 
     # This is a generator that will return tiles in the sequence above
