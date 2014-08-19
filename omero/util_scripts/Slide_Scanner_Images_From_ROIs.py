@@ -1,19 +1,14 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 from email.MIMEMultipart import MIMEMultipart
-from email.MIMEBase import MIMEBase
 from email.MIMEText import MIMEText
-from email import Encoders
 from email.Utils import formatdate
 import smtplib
 import re
-import numpy as np
-import math
 import omero
 import omero.scripts as scripts
 from omero.gateway import BlitzGateway
-from omero.gateway import ImageWrapper
-from omero.rtypes import rstring, rlong, robject, rint
+from omero.rtypes import rstring, rlong, robject
 from omero.model import *
 import omero.util.script_utils as script_utils
 from omero.util.tiles import *
@@ -56,7 +51,7 @@ def create_image_from_tiles(conn,source,image_name,description,box):
         query = "from PixelsType as p where p.value='uint8'"
         pixelsType = queryService.findByQuery(query, None)
         channelList = range(sizeC)
-        bytesPerPixel = pixelsType.bitSize.val / 8
+        # bytesPerPixel = pixelsType.bitSize.val / 8
         iId = pixelsService.createImage(
            sizeX,
            sizeY,
