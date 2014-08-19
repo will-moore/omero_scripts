@@ -16,8 +16,6 @@ import logging
 logger = logging.getLogger(__name__)
 import os
 
-from numpy import fromfunction
-
 import time
 startTime = 0
 
@@ -66,32 +64,41 @@ def create_image_from_tiles(conn,source,image_name,description,box):
         image = conn.getObject("Image", iId)
         return image
 
-    def f(x, y):
-        """
-        create some fake pixel data tile (2D numpy array)
-        """
-        return (x * y)/(1 + x + y)
- 
-    def faketile(w, h):
-        tile = fromfunction(f, (w, h))
-        tile = tile.astype(int)
-        tile[tile > tile_max] = tile_max
-        return list(tile.flatten())
+    # Make a list of all the tiles we're going to need.
+    # This is the SAME ORDER that RPSTileLoop will ask for them.
+    zctTileList = []
+    for t in range(0, sizeT):
+        for c in range(0, sizeC):
+            for z in range(0, sizeZ):
+                for tileOffsetY in range(
+                        0, ((sizeY + tileHeight - 1) / tileHeight)):
+                    for tileOffsetX in range(
+                            0, ((sizeX + tileWidth - 1) / tileWidth)):
+                        x = box[0] + tileOffsetX * tileWidth
+                        y = box[1] + tileOffsetY * tileHeight
+                        w = tileWidth
+                        if (w + x > sizeX):
+                            w = sizeX - x
+                        h = tileHeight
+                        if (h + y > sizeY):
+                            h = sizeY - y
+                        tile_xywh = (x, y, w, h)
+                        zctTileList.append((z, c, t, tile_xywh))
 
-    
-    def mktile(z, c, t, x, y, width, height):
-        blk_x = x + box[0]
-        blk_y = y + box[1]
-        blk_w = width
-        blk_h = height       
-        tile = (blk_x, blk_y, blk_w, blk_h)
-        return list(primary_pixels.getTile(z, c, t, tile).flatten())
+    # This is a generator that will return tiles in the sequence above
+    # getTiles() only opens 1 rawPixelsStore for all the tiles
+    # whereas getTile() opens and closes a rawPixelsStore for each tile.
+    tileGen = primary_pixels.getTiles(zctTileList)
+
+    def nextTile():
+        return tileGen.next()
         
     class Iteration(TileLoopIteration):
 
         def run(self, data, z, c, t, x, y, tileWidth, tileHeight, tileCount):
             # tile2d = mktile(z, c, t, x, y,tileWidth, tileHeight)
-            tile2d = faketile(tileWidth, tileHeight)
+            # tile2d = faketile(tileWidth, tileHeight)
+            tile2d = nextTile()
             data.setTile(tile2d, z, c, t, x, y, tileWidth, tileHeight)
             
     new_image = create_image()
