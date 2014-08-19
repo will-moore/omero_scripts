@@ -21,8 +21,12 @@ import logging
 logger = logging.getLogger(__name__)
 import os
 
+from numpy import fromfunction
+
 import time
 startTime = 0
+
+tile_max = 255
 
 ADMIN_EMAIL = 'admin@omerocloud.qbi.uq.edu.au'
 PATH = os.path.join("/home/omero/OMERO.data/", "download")
@@ -66,6 +70,19 @@ def create_image_from_tiles(conn,source,image_name,description,box):
         
         image = conn.getObject("Image", iId)
         return image
+
+    def f(x, y):
+        """
+        create some fake pixel data tile (2D numpy array)
+        """
+        return (x * y)/(1 + x + y)
+ 
+    def faketile(w, h):
+        tile = fromfunction(f, (w, h))
+        tile = tile.astype(int)
+        tile[tile > tile_max] = tile_max
+        return list(tile.flatten())
+
     
     def mktile(z, c, t, x, y, width, height):
         blk_x = x + box[0]
@@ -78,7 +95,8 @@ def create_image_from_tiles(conn,source,image_name,description,box):
     class Iteration(TileLoopIteration):
 
         def run(self, data, z, c, t, x, y, tileWidth, tileHeight, tileCount):
-            tile2d = mktile(z, c, t, x, y,tileWidth, tileHeight)
+            # tile2d = mktile(z, c, t, x, y,tileWidth, tileHeight)
+            tile2d = faketile(tileWidth, tileHeight)
             data.setTile(tile2d, z, c, t, x, y, tileWidth, tileHeight)
             
     new_image = create_image()
