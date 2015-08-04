@@ -1,10 +1,5 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-from email.MIMEMultipart import MIMEMultipart
-from email.MIMEText import MIMEText
-from email.Utils import formatdate
-import smtplib
-import re
 import omero
 import omero.scripts as scripts
 from omero.gateway import BlitzGateway
@@ -21,18 +16,17 @@ startTime = 0
 
 tile_max = 255
 
-ADMIN_EMAIL = 'admin@omerocloud.qbi.uq.edu.au'
-PATH = os.path.join("/home/omero/OMERO.data/", "download")
-    
+
 def printDuration(output=True):
     global startTime
     if startTime == 0:
         startTime = time.time()
     if output:
         print "Script timer = %s secs" % (time.time() - startTime)
-                   
-def create_image_from_tiles(conn,source,image_name,description,box):
-        
+
+
+def create_image_from_tiles(conn, source, image_name, description, box):
+
     pixelsService = conn.getPixelsService()
     queryService = conn.getQueryService()
     xbox, ybox, wbox, hbox, z1box, z2box, t1box, t2box = box
@@ -44,23 +38,23 @@ def create_image_from_tiles(conn,source,image_name,description,box):
     tileWidth = 1024
     tileHeight = 1024
     primary_pixels = source.getPrimaryPixels()
-           
+
     def create_image():
         query = "from PixelsType as p where p.value='uint8'"
         pixelsType = queryService.findByQuery(query, None)
         channelList = range(sizeC)
         # bytesPerPixel = pixelsType.bitSize.val / 8
         iId = pixelsService.createImage(
-           sizeX,
-           sizeY,
-           sizeZ,
-           sizeT,
-           channelList,
-           pixelsType,
-           image_name,
-           description,
-           conn.SERVICE_OPTS)
-        
+            sizeX,
+            sizeY,
+            sizeZ,
+            sizeT,
+            channelList,
+            pixelsType,
+            image_name,
+            description,
+            conn.SERVICE_OPTS)
+
         image = conn.getObject("Image", iId)
         return image
 
@@ -92,7 +86,7 @@ def create_image_from_tiles(conn,source,image_name,description,box):
 
     def nextTile():
         return tileGen.next()
-        
+
     class Iteration(TileLoopIteration):
 
         def run(self, data, z, c, t, x, y, tileWidth, tileHeight, tileCount):
@@ -100,17 +94,18 @@ def create_image_from_tiles(conn,source,image_name,description,box):
             # tile2d = faketile(tileWidth, tileHeight)
             tile2d = nextTile()
             data.setTile(tile2d, z, c, t, x, y, tileWidth, tileHeight)
-            
+
     new_image = create_image()
     pid = new_image.getPixelsId()
-    loop = RPSTileLoop(conn.c.sf, PixelsI(pid, False))  
+    loop = RPSTileLoop(conn.c.sf, PixelsI(pid, False))
     loop.forEachTile(tileWidth, tileHeight, Iteration())
 
     for theC in range(sizeC):
         pixelsService.setChannelGlobalMinMax(pid, theC, float(0), float(255), conn.SERVICE_OPTS)
 
     return new_image
-    
+
+
 def getRectangles(conn, imageId):
     """
     Returns a list of (x, y, width, height, zStart, zStop, tStart, tStop)
@@ -151,7 +146,8 @@ def getRectangles(conn, imageId):
             rois.append((x, y, width, height, zStart, zEnd, tStart, tEnd))
 
     return rois
-    
+
+
 def process_image(conn, imageId, parameterMap):
     """
     Process an image.
@@ -180,8 +176,8 @@ def process_image(conn, imageId, parameterMap):
 
     imgW = image.getSizeX()
     imgH = image.getSizeY()
-    name,ext = os.path.splitext(image.getName())
-    
+    name, ext = os.path.splitext(image.getName())
+
     for index, r in enumerate(rois):
         x, y, w, h, z1, z2, t1, t2 = r
         # Bounding box
@@ -199,7 +195,7 @@ def process_image(conn, imageId, parameterMap):
 
     print "rois"
     print rois
-    
+
     if len(rois) == 0:
         print "No rectangular ROIs found for image ID: %s" % imageId
         return
@@ -207,12 +203,12 @@ def process_image(conn, imageId, parameterMap):
 #make a new 5D image per ROI
     images = []
     iIds = []
-    for i,r in enumerate(rois):
-        
+    for i, r in enumerate(rois):
+
         x, y, w, h, z1, z2, t1, t2 = r
         print "  ROI x: %s y: %s w: %s h: %s z1: %s z2: %s t1: %s t2: %s"\
             % (x, y, w, h, z1, z2, t1, t2)
-            
+
         new_image_name = name + '_0' + str(index)
         description = "Image from ROIS on parent Image:\n  Name: %s\n"\
             "  Image ID: %d" % (imageName, imageId)
@@ -230,19 +226,19 @@ def process_image(conn, imageId, parameterMap):
                 for c in range(sizeC):
                     for t in range(t1, t2+1):
                         zctTileList.append((z, c, t, tile))
-                        
+
             def tileGen():
                 for i, t in enumerate(pixels.getTiles(zctTileList)):
                     yield t
-                           
+
             newImg = conn.createImageFromNumpySeq(
                 tileGen(), imageName,
                 sizeZ=sizeZ, sizeC=sizeC, sizeT=sizeT,
                 description=description)
-        else: 
+        else:
             s = time.time()
-            newImg = create_image_from_tiles(conn,image,new_image_name,description,r)
-            print 'new image creation took:',time.time()-s,'seconds'
+            newImg = create_image_from_tiles(conn, image, new_image_name, description, r)
+            print 'new image creation took:', time.time()-s, 'seconds'
         images.append(newImg)
         iIds.append(newImg.getId())
 
@@ -333,7 +329,7 @@ def make_images_from_rois(conn, parameterMap):
     if total_rois > 10:
         message += "Cannot start batch processing - too many rois (maximum is 10)."
         return None, message
-        
+
     imageIds = [i.getId() for i in images]
     newImages = []
     newDatasets = []
@@ -366,10 +362,6 @@ def make_images_from_rois(conn, parameterMap):
             message += " and %s new datasets" % len(newDatasets)
         else:
             message += " and a new dataset"
-    
-    print parameterMap['Email_Results']
-    if parameterMap['Email_Results'] and (newImages or newDatasets):
-        email_results(conn,parameterMap,new_ids)
 
     if not links or not len(links) == len(newImages):
         message += " but some images could not be attached"
@@ -400,61 +392,6 @@ def list_image_names(conn, ids):
 
     return image_names
 
-def email_results(conn,params,image_ids):
-    """
-    E-mail the result to the user.
-
-    @param conn: The BlitzGateway connection
-    @param results: Dict of (imageId,text_result) pairs
-    @param report: The results report
-    @param params: The script parameters
-    """
-    print params['Email_Results']
-    if not params['Email_Results']:
-        return
-
-    image_names = list_image_names(conn, image_ids)
-
-    msg = MIMEMultipart()
-    msg['From'] = ADMIN_EMAIL
-    msg['To'] = params['Email_address']
-    msg['Date'] = formatdate(localtime=True)
-    msg['Subject'] = '[OMERO Job] Slide Scanner image cropping'
-    msg.attach(MIMEText("""
-New images created from ROIs:
-
-Format:
-[parent project/datset][child dataset] new image id : parent image name
-
-------------------------------------------------------------------------
-%s""" % ("\n".join(image_names))))
-
-    smtpObj = smtplib.SMTP('localhost')
-    smtpObj.sendmail(ADMIN_EMAIL, [params['Email_address']], msg.as_string())
-    smtpObj.quit()
-
-def validate_email(conn, params):
-    """
-    Checks that a valid email address is present for the user_id
-
-    @param conn: The BlitzGateway connection
-    @param params: The script parameters
-    """
-    userEmail = ''
-    if params['Email_address']:
-        userEmail = params['Email_address']
-    else:
-        user = conn.getUser()
-        user.getName() # Initialises the proxy object for simpleMarshal
-        dic = user.simpleMarshal()
-        if 'email' in dic and dic['email']:
-            userEmail = dic['email']
-
-    params['Email_address'] = userEmail
-    print userEmail
-    # Validate with a regular expression. Not perfect but it will do
-    return re.match("^[a-zA-Z0-9._%-]+@[a-zA-Z0-9._%-]+.[a-zA-Z]{2,6}$",
-                    userEmail)
 
 def runAsScript():
     """
@@ -482,18 +419,6 @@ def runAsScript():
             "Container_Name", grouping="3",
             description="Option: put Images in new Dataset with this name",
             default="From_ROIs"),
-                            
-        scripts.Bool(
-            "Email_Results", grouping="4", default=True,
-            description="E-mail the results"),
-                            
-        scripts.String("Email_address", grouping="4.1",
-        description="Specify e-mail address"),
-
-        version="5.0.2",
-        authors=["Daniel Matthews", "QBI"],
-        institutions = ["University of Queensland"],
-        contact = "d.matthews1@uq.edu.au",
     )
 
     try:
@@ -502,10 +427,6 @@ def runAsScript():
 
         # create a wrapper so we can use the Blitz Gateway.
         conn = BlitzGateway(client_obj=client)
-        
-        if parameterMap['Email_Results'] and not validate_email(conn, parameterMap):
-            client.setOutput("Message", rstring("No valid email address"))
-            return
 
         robj, message = make_images_from_rois(conn, parameterMap)
 
@@ -519,11 +440,3 @@ def runAsScript():
 
 if __name__ == "__main__":
     runAsScript()
-#     box = [150, 150, 75, 225]
-#     Largeshape = [400, 400]
-#     block_size = [50, 50]
-#     mblocks = float(box[2])/float(block_size[0])
-#     nblocks = float(box[3])/float(block_size[1])
-#     largeimage = np.ones((400,400))
-#     tile = tile_image_gen(largeimage,box)
-#     print tile.shape
