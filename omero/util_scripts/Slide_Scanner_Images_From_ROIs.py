@@ -1,5 +1,8 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
+
+# Adapted by Dan Matthews from 'Images_From_ROIs.py'
+
 import omero
 import omero.scripts as scripts
 from omero.gateway import BlitzGateway
